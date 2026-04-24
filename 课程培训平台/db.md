@@ -17,6 +17,10 @@
 2. `customers`：C 端学员用户
 3. `customer_profiles`：学员上课资料（抖音号、收入区间、学习目标等）
 
+### 2.1.1 课程分类
+
+1. `course_categories`：课程分类（后台可配置，运营人员可增删改）
+
 ### 2.2 课程与课期
 
 1. `courses`：课程主数据
@@ -85,26 +89,28 @@
 
 ## 4. 主外键关系（文字版）
 
-1. `courses` 1:N `course_sessions`
-2. `course_sessions` 1:N `session_segments`
-3. `customers` 1:N `orders`
-4. `orders` 1:N `payment_records`
-5. `customers` 1:N `registrations`
-6. `registrations` 1:N `registration_slots`
-7. `orders` 1:N `registration_slots`（通过 `root_order_id` 回溯来源订单）
-8. `registration_slots` 1:N `checkin_records`
-9. `session_segments` 1:N `checkin_records`
-10. `refunds` 1:N `refund_items`
-11. `registration_slots` 1:0..1 `refund_items`
-12. `course_sessions` 1:N `seat_groups`
-13. `registration_slots` 1:0..1 `seat_assignments`
-14. `seat_groups` 1:N `seat_assignments`
+1. `course_categories` 1:N `courses`
+2. `courses` 1:N `course_sessions`
+3. `course_sessions` 1:N `session_segments`
+4. `customers` 1:N `orders`
+5. `orders` 1:N `payment_records`
+6. `customers` 1:N `registrations`
+7. `registrations` 1:N `registration_slots`
+8. `orders` 1:N `registration_slots`（通过 `root_order_id` 回溯来源订单）
+9. `registration_slots` 1:N `checkin_records`
+10. `session_segments` 1:N `checkin_records`
+11. `refunds` 1:N `refund_items`
+12. `registration_slots` 1:0..1 `refund_items`
+13. `course_sessions` 1:N `seat_groups`
+14. `registration_slots` 1:0..1 `seat_assignments`
+15. `seat_groups` 1:N `seat_assignments`
 
 ## 5. ER 关系图
 
 ```mermaid
 erDiagram
     staff_accounts ||--o{ customers : "binds sales"
+    course_categories ||--o{ courses : "categorizes"
     staff_accounts ||--o{ courses : "creates"
     staff_accounts ||--o{ course_sessions : "lectures/creates"
     staff_accounts ||--o{ orders : "creates/verifies"
@@ -119,6 +125,7 @@ erDiagram
     customers ||--o{ gift_records : "gives/receives"
     customers ||--o{ checkin_qr_tokens : "has token"
 
+    courses ||--o| course_categories : "belongs to"
     courses ||--o{ course_sessions : "contains"
     course_sessions ||--o{ session_segments : "contains"
     course_sessions ||--o{ orders : "for"
@@ -159,6 +166,10 @@ erDiagram
    - 未发生转赠（按业务口径判断）
 3. 小程序订单支付成功后自动核销；线下订单由财务审核核销。
 4. 转赠时保持业绩归属不变（`sales_agent_id` 沿用根归属）。
+5. `course_categories` 删除时：若存在关联课程则禁止删除。
+6. `registration_slots.gift_level`：仅 `gift_level = 0` 且 `status = active` 且未分配座位的名额可被转赠，转赠后置为 `1`，禁止转赠链（A→B 后 B 不可继续转赠）。
+7. 客户注册时可绑定业务员（非必填），注册后管理员/运营可在后台为客户绑定或更换业务员；业绩归属以订单创建时客户绑定的业务员为准。
+8. `checkin_qr_tokens`：扫码签到流程中，学员扫描课期二维码后生成个人签到码（短时效令牌），工作人员扫码学员个人码完成签到核验后标记 `consumed_at`，该码立即失效。
 
 ## 7. 字段级数据字典
 
@@ -203,6 +214,16 @@ erDiagram
 | created_at | datetime | 是 | 创建时间 |
 | updated_at | datetime | 是 | 更新时间 |
 
+### 7.3.1 `course_categories`（课程分类）
+
+| 字段名 | 类型 | 必填 | 业务说明 |
+| :--- | :--- | :--- | :--- |
+| id | bigint | 是 | 主键ID |
+| name | varchar(64) | 是 | 分类名称 |
+| sort_order | int | 是 | 排序优先级 |
+| created_at | datetime | 是 | 创建时间 |
+| updated_at | datetime | 是 | 更新时间 |
+
 ### 7.4 `courses`（课程）
 
 | 字段名 | 类型 | 必填 | 业务说明 |
@@ -211,7 +232,7 @@ erDiagram
 | name | varchar(128) | 是 | 课程名称 |
 | intro | text | 否 | 课程简介 |
 | cover_image_url | varchar(512) | 否 | 封面图URL |
-| category | varchar(64) | 否 | 课程分类 |
+| category_id | bigint | 否 | 课程分类ID，关联 course_categories.id |
 | sort_priority | int | 是 | 排序优先级 |
 | status | enum(draft,online,offline) | 是 | 课程状态 |
 | created_by | bigint | 否 | 创建人（后台账号） |
