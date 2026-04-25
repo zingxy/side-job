@@ -42,16 +42,20 @@
 1. `checkin_records`：签到事实表（按名额+场次）
 2. `checkin_qr_tokens`：短时效个人签到码
 
-### 2.6 转赠
+### 2.6 审计日志
+
+1. `audit_logs`：敏感操作审计日志（财务核销、退款审批、转赠、座位分配、价格修改等）
+
+### 2.7 转赠
 
 1. `gift_records`：名额转赠记录
 
-### 2.7 退款
+### 2.8 退款
 
 1. `refunds`：退款主单
 2. `refund_items`：退款名额明细
 
-### 2.8 会场分组
+### 2.9 会场分组
 
 1. `seat_groups`：课期分组
 2. `seat_assignments`：名额分组分配
@@ -84,8 +88,11 @@
 ### 3.4 转赠约束（禁止转赠链）
 
 - 通过 `registration_slots.gift_level` 标识该名额是否已转赠过
-- 规则：仅 `gift_level = 0` 的有效名额可被转赠，转赠后置为 `1`
+- 规则：仅 `gift_level = 0` 且 `status = active` 且未分配座位的名额可被转赠，转赠后置为 `1`
 - 效果：支持 A→B，不支持 B→C
+- 转赠链接状态由 `gift_records.status` 管理：`pending`（待确认）、`accepted`（已确认）、`expired`（24 小时过期）、`cancelled`（发起人主动取消）
+- 名额转赠状态由 `registration_slots.gift_status` 管理：`0`（可转赠）、`1`（转赠中，链接已发出未确认）、`2`（已转赠，受赠人已确认）
+- 发起转赠时：`gift_status` 置为 `1`；受赠人确认后：`gift_status` 置为 `2`，`gift_level = 1`；转赠过期/取消时：`gift_status` 恢复为 `0`
 
 ## 4. 主外键关系（文字版）
 
@@ -153,6 +160,9 @@ erDiagram
     registration_slots ||--o| seat_assignments : "assigned"
     registration_slots ||--o{ checkin_records : "checked"
     registration_slots ||--o{ checkin_qr_tokens : "token for"
+
+    staff_accounts ||--o{ audit_logs : "triggers"
+    customers ||--o{ audit_logs : "triggers"
 ```
 
 ## 6. 业务规则落地建议
@@ -160,14 +170,17 @@ erDiagram
 1. `course_sessions.enrolled_count` 使用事务更新，并配套定时对账任务修正。
 2. 退款可退名额筛选条件统一为：
    - `registration_slots.status = active`
-   - 当前归属申请人
+   - `registration_slots.owner_customer_id = 申请人`
+   - `registration_slots.root_customer_id = 申请人`（仅原始购买人可退款，转赠获得的名额不可退）
    - 未分配座位
    - 不存在 `checkin_records`
-   - 未发生转赠（按业务口径判断）
+   - `registration_slots.gift_level = 0`（未转赠）
+   - `registration_slots.gift_status = 0`（非转赠中状态）
 3. 小程序订单支付成功后自动核销；线下订单由财务审核核销。
 4. 转赠时保持业绩归属不变（`sales_agent_id` 沿用根归属）。
 5. `course_categories` 删除时：若存在关联课程则禁止删除。
-6. `registration_slots.gift_level`：仅 `gift_level = 0` 且 `status = active` 且未分配座位的名额可被转赠，转赠后置为 `1`，禁止转赠链（A→B 后 B 不可继续转赠）。
+6. `registration_slots.gift_level`：仅 `gift_level = 0` 且 `gift_status = 0` 且 `status = active` 且未分配座位的名额可被转赠，转赠后置 `gift_level = 1`、`gift_status = 2`，禁止转赠链（A→B 后 B 不可继续转赠）。
+   - 发起转赠时 `gift_status` 置为 `1`；受赠人确认后 `gift_status = 2`、`gift_level = 1`；转赠过期/取消时 `gift_status` 恢复为 `0`
 7. 客户注册时可绑定业务员（非必填），注册后管理员/运营可在后台为客户绑定或更换业务员；业绩归属以订单创建时客户绑定的业务员为准。
 8. `checkin_qr_tokens`：扫码签到流程中，学员扫描课期二维码后生成个人签到码（短时效令牌），工作人员扫码学员个人码完成签到核验后标记 `consumed_at`，该码立即失效。
 
@@ -234,7 +247,7 @@ erDiagram
 | cover_image_url | varchar(512) | 否 | 封面图URL |
 | category_id | bigint | 否 | 课程分类ID，关联 course_categories.id |
 | sort_priority | int | 是 | 排序优先级 |
-| status | enum(draft,online,offline) | 是 | 课程状态 |
+| status | enum(draft,online,offline) | 是 | 课程状态（草稿/上架/下架） |
 | created_by | bigint | 否 | 创建人（后台账号） |
 | created_at | datetime | 是 | 创建时间 |
 | updated_at | datetime | 是 | 更新时间 |
@@ -344,6 +357,7 @@ erDiagram
 | root_customer_id | bigint | 是 | 原始购买人ID |
 | status | enum(active,refunded,cancelled) | 是 | 名额状态 |
 | gift_level | tinyint | 是 | 转赠层级（0未转赠，1已转赠） |
+| gift_status | tinyint | 是 | 转赠状态（0=可转赠, 1=转赠中, 2=已转赠） |
 | gifted_at | datetime | 否 | 转赠完成时间 |
 | refunded_at | datetime | 否 | 退款完成时间 |
 | cancelled_at | datetime | 否 | 取消时间 |
@@ -368,6 +382,8 @@ erDiagram
 | handled_at | datetime | 否 | 处理时间 |
 | created_at | datetime | 是 | 创建时间 |
 | updated_at | datetime | 是 | 更新时间 |
+| idempotency_key | varchar(128) | 否 | 退款幂等键，格式：order_id-applicant_customer_id-时间戳 |
+| rejected_reason | varchar(512) | 否 | 退款拒绝原因（展示给前端） |
 
 ### 7.12 `refund_items`（退款名额明细）
 
@@ -393,6 +409,8 @@ erDiagram
 | slot_count | int | 是 | 转赠名额数 |
 | slot_ids_snapshot | json | 是 | 转赠名额快照 |
 | share_token | varchar(128) | 否 | 分享令牌 |
+| status | enum(pending,accepted,expired,cancelled) | 是 | 转赠状态 |
+| expires_at | datetime | 是 | 转赠过期时间（默认创建后 24 小时） |
 | accepted_at | datetime | 否 | 受赠确认时间 |
 | created_at | datetime | 是 | 创建时间 |
 
@@ -442,4 +460,37 @@ erDiagram
 | expires_at | datetime | 是 | 过期时间 |
 | consumed_at | datetime | 否 | 核验使用时间 |
 | created_at | datetime | 是 | 创建时间 |
+
+### 7.18 `audit_logs`（审计日志）
+
+| 字段名 | 类型 | 必填 | 业务说明 |
+| :--- | :--- | :--- | :--- |
+| id | bigint | 是 | 主键ID |
+| operator_id | bigint | 是 | 操作人ID（staff_accounts.id 或 customers.id） |
+| operator_type | enum(staff,customer) | 是 | 操作人类型 |
+| action | varchar(64) | 是 | 操作类型（verify_order/reject_order/approve_refund/reject_refund/create_gift/assign_seat/modify_price 等） |
+| target_table | varchar(64) | 是 | 目标表名 |
+| target_id | bigint | 是 | 目标记录ID |
+| old_value | json | 否 | 变更前快照 |
+| new_value | json | 否 | 变更后快照 |
+| remark | varchar(512) | 否 | 备注（如拒绝原因、拒绝说明） |
+| created_at | datetime | 是 | 创建时间 |
+
+## 8. 唯一索引声明
+
+| 表 | 字段 / 组合 | 约束类型 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `staff_accounts` | `username` | UNIQUE | 登录账号唯一 |
+| `customers` | `wechat_openid` | UNIQUE | 微信用户唯一 |
+| `course_categories` | `name` | UNIQUE | 分类名称唯一 |
+| `orders` | `order_no` | UNIQUE | 订单号唯一 |
+| `payment_records` | `payment_no` | UNIQUE | 支付流水号唯一 |
+| `refunds` | `refund_no` | UNIQUE | 退款单号唯一 |
+| `refunds` | `(order_id, applicant_customer_id, created_at)` | 业务去重 | 退款幂等控制：同一订单同一申请人 5 分钟内仅允许一笔 pending 退款 |
+| `refunds` | `idempotency_key` | UNIQUE | 退款幂等键数据库兜底约束 |
+| `gift_records` | `gift_no` | UNIQUE | 转赠流水号唯一 |
+| `gift_records` | `share_token` | UNIQUE | 分享令牌唯一 |
+| `checkin_qr_tokens` | `token` | UNIQUE | 签到令牌唯一 |
+| `checkin_records` | `(registration_slot_id, session_segment_id)` | UNIQUE | 同一名额同一场次仅可签到一次 |
+| `seat_assignments` | `registration_slot_id` | UNIQUE | 每个名额最多分配一次 |
 
