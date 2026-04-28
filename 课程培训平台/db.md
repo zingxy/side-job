@@ -504,21 +504,50 @@ erDiagram
 
 ## 9. 推荐索引（非唯一）
 
-以下为支撑 PRD 核心查询场景的普通索引：
+### 9.1 业务查询索引
+
+以下为支撑 PRD 核心查询场景的复合索引：
 
 | 表 | 字段 / 组合 | 场景 |
 | :--- | :--- | :--- |
-| `customers` | `bound_sales_id` | 按业务员筛选/统计客户（PRD §3.2.1） |
-| `orders` | `(customer_id, created_at)` | 小程序「我的订单」按时间倒序（PRD §3.1.4） |
-| `orders` | `(status, created_at)` | 支付超时订单定时清理任务 |
-| `registrations` | `sales_agent_id` | 业务员业绩统计（PRD §3.2.6） |
+| `orders` | `(customer_id, created_at)` | 小程序「我的订单」按创建时间倒序列表（PRD §3.1.4） |
+| `orders` | `(status, created_at)` | 支付超时订单自动关闭、按状态过滤查询；覆盖 `idx_status(status)` |
 | `course_sessions` | `(lecturer_id, status)` | 讲师查询自己授课课期（PRD §3.2.2） |
 | `registration_slots` | `(root_order_id, owner_customer_id, root_customer_id, status, gift_level, gift_status)` | 退款名额筛选（PRD §4.6） |
-| `refunds` | `(order_id, applicant_customer_id, created_at)` | 退款业务去重：5 分钟窗口查 pending 退款；最左前缀同时覆盖 `idx_order_id(order_id)` 和 `idx_order_applicant(order_id, applicant_customer_id)` 查询 |
-| `refunds` | `(status, created_at)` | 财务待处理退款列表；最左前缀覆盖 `idx_status(status)` 查询 |
+| `refunds` | `(order_id, applicant_customer_id, created_at)` | 退款业务去重：5 分钟窗口内查 pending 退款；覆盖 `(order_id)` 和 `(order_id, applicant_customer_id)` 查询 |
+| `refunds` | `(status, created_at)` | 财务待处理退款列表查询 |
 | `gift_records` | `(from_customer_id, status)` | 赠送人查看自己的转赠记录 |
 | `gift_records` | `(to_customer_id, status)` | 受赠人查看收到的转赠记录 |
 | `gift_records` | `(share_token, status)` | 转赠链接确认查询 |
 | `checkin_records` | `(session_id, checked_in_at)` | 按课期+时间查询签到记录 |
 | `checkin_qr_tokens` | `(customer_id, session_id, consumed_at)` | 查询学员在某课期的未消耗签到码 |
+
+### 9.2 单列查询索引
+
+以下为常用单条件查询和关联查询的单列索引：
+
+| 表 | 字段 | 场景 |
+| :--- | :--- | :--- |
+| `customers` | `bound_sales_id` | 按业务员筛选/统计客户（PRD §3.2.1） |
+| `registrations` | `sales_agent_id` | 业务员业绩统计（PRD §3.2.6） |
+| `orders` | `session_id` | 按课期查询订单列表 |
+| `registrations` | `session_id` | 按课期查询报名汇总 |
+| `payment_records` | `order_id` | 按订单查询支付流水 |
+| `registration_slots` | `registration_id` | 报名汇总 → 名额明细查询 |
+| `registration_slots` | `session_id` | 按课期查询名额明细 |
+| `registration_slots` | `owner_customer_id` | 按持有人查询名额 |
+| `registration_slots` | `root_order_id` | 按来源订单查询名额 |
+| `registration_slots` | `root_customer_id` | 按原始购买人查询名额 |
+| `registration_slots` | `status` | 按状态过滤名额 |
+| `refund_items` | `refund_id` | 退款主单 → 退款明细查询 |
+| `refund_items` | `registration_slot_id` | 按名额查退款记录 |
+| `gift_records` | `session_id` | 按课期查询转赠记录 |
+| `gift_records` | `from_customer_id` | 按赠送人查询转赠记录 |
+| `gift_records` | `to_customer_id` | 按受赠人查询转赠记录 |
+| `seat_groups` | `session_id` | 按课期查询分组 |
+| `seat_assignments` | `seat_group_id` | 按分组查询名额分配 |
+| `checkin_records` | `session_id` | 按课期查询签到记录 |
+| `checkin_records` | `session_segment_id` | 按场次查询签到记录 |
+| `checkin_qr_tokens` | `session_id` | 按课期查询签到码 |
+| `checkin_qr_tokens` | `customer_id` | 按学员查询签到码 |
 
