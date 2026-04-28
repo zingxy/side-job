@@ -161,8 +161,8 @@ erDiagram
     registration_slots ||--o{ checkin_records : "checked"
     registration_slots ||--o{ checkin_qr_tokens : "token for"
 
-    staff_accounts ||--o{ audit_logs : "triggers"
-    customers ||--o{ audit_logs : "triggers"
+    staff_accounts ||--o{ audit_logs : "triggers(staff)"
+    customers ||--o{ audit_logs : "triggers(customer)"
 ```
 
 ## 6. 业务规则落地建议
@@ -194,6 +194,9 @@ erDiagram
 | username | varchar(64) | 是 | 登录账号，唯一 |
 | password_hash | varchar(255) | 是 | 密码哈希 |
 | display_name | varchar(64) | 是 | 显示名称 |
+| phone | varchar(20) | 否 | 手机号 |
+| wechat_id | varchar(64) | 否 | 微信号 |
+| wechat_name | varchar(64) | 否 | 微信昵称 |
 | role | enum(admin,operations,sales,finance,lecturer) | 是 | 账号角色 |
 | status | enum(enabled,disabled) | 是 | 账号状态 |
 | created_at | datetime | 是 | 创建时间 |
@@ -210,6 +213,7 @@ erDiagram
 | avatar_url | varchar(512) | 否 | 头像地址 |
 | source | enum(wechat_mini_program,manual_import) | 是 | 注册来源 |
 | bound_sales_id | bigint | 否 | 绑定业务员ID |
+| purchase_count | int | 是 | 购买次数（成功支付并核销的订单数，冗余字段，核销时 +1，退款时 -1） |
 | registered_at | datetime | 是 | 注册时间 |
 | created_at | datetime | 是 | 创建时间 |
 | updated_at | datetime | 是 | 更新时间 |
@@ -223,6 +227,7 @@ erDiagram
 | monthly_income_range | varchar(64) | 否 | 月收入区间 |
 | learning_goal | varchar(512) | 否 | 学习目标 |
 | remark | varchar(512) | 否 | 备注 |
+| customer_source | varchar(64) | 否 | 客户来源（直播间加好友/别人介绍等），由业务员填写 |
 | profile_completed_at | datetime | 否 | 信息完善时间 |
 | created_at | datetime | 是 | 创建时间 |
 | updated_at | datetime | 是 | 更新时间 |
@@ -248,6 +253,7 @@ erDiagram
 | category_id | bigint | 否 | 课程分类ID，关联 course_categories.id |
 | sort_priority | int | 是 | 排序优先级 |
 | status | enum(draft,online,offline) | 是 | 课程状态（草稿/上架/下架） |
+| total_revenue_amount | decimal(12,2) | 是 | 课程总收入（该课程下所有已核销订单的金额汇总，冗余字段） |
 | created_by | bigint | 否 | 创建人（后台账号） |
 | created_at | datetime | 是 | 创建时间 |
 | updated_at | datetime | 是 | 更新时间 |
@@ -303,7 +309,7 @@ erDiagram
 | total_amount | decimal(10,2) | 是 | 总金额 |
 | status | enum(pending_payment,paid,verified,rejected,refunding,refunded,closed) | 是 | 订单状态 |
 | payment_deadline_at | datetime | 否 | 支付截止时间 |
-| paid_at | datetime | 否 | 支付时间 |
+| paid_at | datetime | 否 | 支付时间（小程序订单回调写入/线下订单由业务员填写客户实际付款时间） |
 | verified_at | datetime | 否 | 核销时间（自动或人工） |
 | verified_by | bigint | 否 | 财务核销人（线下单） |
 | rejected_reason | varchar(512) | 否 | 拒绝原因 |
@@ -371,7 +377,7 @@ erDiagram
 | id | bigint | 是 | 主键ID |
 | refund_no | varchar(64) | 是 | 退款单号，唯一 |
 | order_id | bigint | 是 | 关联订单ID |
-| applicant_customer_id | bigint | 否 | 申请客户ID（后台发起时可空） |
+| applicant_customer_id | bigint | 是 | 申请客户ID（小程序申请/后台发起均必填） |
 | source | enum(customer,staff) | 是 | 退款来源（客户申请/后台发起） |
 | type | enum(full,partial) | 是 | 退款类型（全额/部分） |
 | channel | enum(wechat_original_route,offline_manual) | 是 | 退款渠道 |
@@ -466,8 +472,9 @@ erDiagram
 | 字段名 | 类型 | 必填 | 业务说明 |
 | :--- | :--- | :--- | :--- |
 | id | bigint | 是 | 主键ID |
-| operator_id | bigint | 是 | 操作人ID（staff_accounts.id 或 customers.id） |
 | operator_type | enum(staff,customer) | 是 | 操作人类型 |
+| operator_staff_id | bigint | 否 | 操作人ID（operator_type=staff 时必填，关联 staff_accounts.id） |
+| operator_customer_id | bigint | 否 | 操作人ID（operator_type=customer 时必填，关联 customers.id） |
 | action | varchar(64) | 是 | 操作类型（verify_order/reject_order/approve_refund/reject_refund/create_gift/assign_seat/modify_price 等） |
 | target_table | varchar(64) | 是 | 目标表名 |
 | target_id | bigint | 是 | 目标记录ID |
@@ -490,7 +497,28 @@ erDiagram
 | `refunds` | `idempotency_key` | UNIQUE | 退款幂等键数据库兜底约束 |
 | `gift_records` | `gift_no` | UNIQUE | 转赠流水号唯一 |
 | `gift_records` | `share_token` | UNIQUE | 分享令牌唯一 |
+| `registrations` | `(customer_id, session_id)` | UNIQUE | 同一客户同一课期仅一条报名汇总 |
 | `checkin_qr_tokens` | `token` | UNIQUE | 签到令牌唯一 |
 | `checkin_records` | `(registration_slot_id, session_segment_id)` | UNIQUE | 同一名额同一场次仅可签到一次 |
 | `seat_assignments` | `registration_slot_id` | UNIQUE | 每个名额最多分配一次 |
+
+## 9. 推荐索引（非唯一）
+
+以下为支撑 PRD 核心查询场景的普通索引：
+
+| 表 | 字段 / 组合 | 场景 |
+| :--- | :--- | :--- |
+| `customers` | `bound_sales_id` | 按业务员筛选/统计客户（PRD §3.2.1） |
+| `orders` | `(customer_id, created_at)` | 小程序「我的订单」按时间倒序（PRD §3.1.4） |
+| `orders` | `(status, created_at)` | 支付超时订单定时清理任务 |
+| `registrations` | `sales_agent_id` | 业务员业绩统计（PRD §3.2.6） |
+| `course_sessions` | `(lecturer_id, status)` | 讲师查询自己授课课期（PRD §3.2.2） |
+| `registration_slots` | `(root_order_id, owner_customer_id, root_customer_id, status, gift_level, gift_status)` | 退款名额筛选（PRD §4.6） |
+| `refunds` | `(order_id, applicant_customer_id, created_at)` | 退款业务去重：5 分钟窗口查 pending 退款；最左前缀同时覆盖 `idx_order_id(order_id)` 和 `idx_order_applicant(order_id, applicant_customer_id)` 查询 |
+| `refunds` | `(status, created_at)` | 财务待处理退款列表；最左前缀覆盖 `idx_status(status)` 查询 |
+| `gift_records` | `(from_customer_id, status)` | 赠送人查看自己的转赠记录 |
+| `gift_records` | `(to_customer_id, status)` | 受赠人查看收到的转赠记录 |
+| `gift_records` | `(share_token, status)` | 转赠链接确认查询 |
+| `checkin_records` | `(session_id, checked_in_at)` | 按课期+时间查询签到记录 |
+| `checkin_qr_tokens` | `(customer_id, session_id, consumed_at)` | 查询学员在某课期的未消耗签到码 |
 
