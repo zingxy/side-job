@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>OSS 图片 Demo</title>
+    <style>
+        body {
+            background-color: #f0f2f5;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            padding-top: 60px;
+            margin: 0;
+            font-family: sans-serif;
+        }
+        .container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+            width: 500px;
+        }
+        h2 { margin: 0 0 16px 0; font-size: 18px; }
+        .section { padding: 20px 0; border-top: 1px solid #eee; }
+        .section:first-child { border-top: none; padding-top: 0; }
+        .section h2 { margin-bottom: 12px; }
+
+        /* upload */
+        .file-input-wrapper {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            padding: 30px;
+            cursor: pointer;
+            margin-bottom: 12px;
+            transition: border-color 0.2s;
+        }
+        .file-input-wrapper:hover { border-color: #1890ff; }
+        .file-input-wrapper input { display: none; }
+        .file-input-wrapper span { color: #999; }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #1890ff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover { background-color: #40a9ff; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+        button.danger { background-color: #ff4d4f; }
+        button.danger:hover { background-color: #ff7875; }
+
+        img.preview {
+            max-width: 100%;
+            max-height: 200px;
+            margin: 8px 0;
+            display: none;
+            border-radius: 4px;
+            object-fit: contain;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .status { margin-top: 8px; color: #666; font-size: 13px; white-space: pre-wrap; word-break: break-all; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- 上传 -->
+    <div class="section">
+        <h2>上传图片</h2>
+        <label class="file-input-wrapper" id="dropZone">
+            <input type="file" id="fileInput" accept="image/*">
+            <span id="fileTip">点击或拖拽选择图片</span>
+        </label>
+        <img id="uploadPreview" class="preview" />
+        <button id="uploadBtn" onclick="uploadImage()" disabled>上传到 OSS</button>
+        <div id="uploadStatus" class="status"></div>
+    </div>
+
+    <!-- 删除 -->
+    <div class="section">
+        <h2>删除图片</h2>
+        <input type="text" id="deleteInput" placeholder="输入完整的图片 URL" />
+        <button class="danger" onclick="deleteImage()">删除图片</button>
+        <div id="deleteStatus" class="status"></div>
+    </div>
+
+    <!-- 查看 -->
+    <div class="section">
+        <h2>查看图片</h2>
+        <input type="text" id="viewInput" placeholder="输入图片 URL（publicUrl）" />
+        <button onclick="viewImage()">展示图片</button>
+        <img id="viewPreview" class="preview" />
+        <div id="viewStatus" class="status"></div>
+    </div>
+</div>
+
+<script>
+    const API_BASE = '';
+    let selectedFile = null;
+
+    const fileInput = document.getElementById('fileInput');
+    const uploadPreview = document.getElementById('uploadPreview');
+    const fileTip = document.getElementById('fileTip');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const uploadStatus = document.getElementById('uploadStatus');
+    const dropZone = document.getElementById('dropZone');
+
+    // 拖拽
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.borderColor = '#1890ff'; });
+    dropZone.addEventListener('dragleave', () => { dropZone.style.borderColor = '#ddd'; });
+    dropZone.addEventListener('drop', e => {
+        e.preventDefault();
+        dropZone.style.borderColor = '#ddd';
+        if (e.dataTransfer.files.length > 0) selectFile(e.dataTransfer.files[0]);
+    });
+
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) selectFile(fileInput.files[0]);
+    });
+
+    function selectFile(file) {
+        selectedFile = file;
+        fileTip.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+        const reader = new FileReader();
+        reader.onload = e => {
+            uploadPreview.src = e.target.result;
+            uploadPreview.style.display = 'block';
+        };
+        reader.readAsDataURL(file);
+        uploadBtn.disabled = false;
+    }
+
+    async function uploadImage() {
+        if (!selectedFile) return;
+        uploadBtn.disabled = true;
+        uploadStatus.textContent = '1. 正在请求上传签名...';
+
+        try {
+            const signRes = await fetch(API_BASE + '/api/uploadSignUrl', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    fileName: selectedFile.name,
+                    contentType: selectedFile.type
+                })
+            });
+            const signData = await signRes.json();
+
+            if (signData.code !== 200) {
+                uploadStatus.textContent = '获取签名失败: ' + signData.msg;
+                uploadBtn.disabled = false;
+                return;
+            }
+
+            const uploadUrl = signData.data.uploadUrl;
+            const objectKey = signData.data.objectKey;
+            uploadStatus.textContent = '2. 签名获取成功，正在上传到 OSS...\nobjectKey: ' + objectKey;
+
+            const uploadRes = await fetch(uploadUrl, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': selectedFile.type,
+                    'Cache-Control': 'public, max-age=31536000',
+                    'Content-Disposition': 'inline'
+                },
+                body: selectedFile
+            });
+
+            if (uploadRes.ok) {
+                const publicUrl = signData.data.publicUrl;
+                uploadPreview.src = publicUrl;
+                uploadPreview.style.display = 'block';
+                uploadStatus.textContent = '上传成功!\nobjectKey: ' + objectKey + '\npublicUrl: ' + publicUrl;
+            } else {
+                uploadStatus.textContent = 'OSS 上传失败，HTTP 状态: ' + uploadRes.status;
+            }
+        } catch (err) {
+            uploadStatus.textContent = '请求失败: ' + err.message;
+        }
+
+        uploadBtn.disabled = false;
+    }
+
+    async function deleteImage() {
+        const url = document.getElementById('deleteInput').value.trim();
+        if (!url) {
+            document.getElementById('deleteStatus').textContent = '请输入图片 URL';
+            return;
+        }
+
+        document.getElementById('deleteStatus').textContent = '正在删除...';
+
+        try {
+            const res = await fetch(API_BASE + '/api/deleteImage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url })
+            });
+            const data = await res.json();
+
+            if (data.code === 200) {
+                document.getElementById('deleteStatus').textContent = '删除成功\nobjectKey: ' + data.data.objectKey;
+            } else {
+                document.getElementById('deleteStatus').textContent = '删除失败: ' + data.msg;
+            }
+        } catch (err) {
+            document.getElementById('deleteStatus').textContent = '请求失败: ' + err.message;
+        }
+    }
+
+    async function viewImage() {
+        const url = document.getElementById('viewInput').value.trim();
+        if (!url) {
+            document.getElementById('viewStatus').textContent = '请输入图片 URL';
+            return;
+        }
+
+        const viewPreview = document.getElementById('viewPreview');
+        const viewStatus = document.getElementById('viewStatus');
+
+        viewStatus.textContent = '正在加载...';
+        viewPreview.style.display = 'none';
+        viewPreview.onload = () => { viewStatus.textContent = ''; };
+        viewPreview.onerror = () => { viewStatus.textContent = '图片加载失败，请检查 URL'; };
+        viewPreview.src = url;
+        viewPreview.style.display = 'block';
+    }
+</script>
+
+</body>
+</html>
