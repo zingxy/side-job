@@ -244,19 +244,19 @@ erDiagram
 
 ### 7.4 `courses`（课程）
 
-| 字段名 | 类型 | 必填 | 业务说明 |
-| :--- | :--- | :--- | :--- |
-| id | bigint | 是 | 主键ID |
-| name | varchar(128) | 是 | 课程名称 |
-| intro | text | 否 | 课程简介 |
-| cover_image_url | varchar(512) | 否 | 封面图URL |
-| category_id | bigint | 否 | 课程分类ID，关联 course_categories.id |
-| sort_priority | int | 是 | 排序优先级 |
-| status | enum(draft,online,offline) | 是 | 课程状态（草稿/上架/下架） |
-| total_revenue_amount | decimal(12,2) | 是 | 课程总收入（该课程下所有已核销订单的金额汇总，冗余字段） |
-| created_by | bigint | 否 | 创建人（后台账号） |
-| created_at | datetime | 是 | 创建时间 |
-| updated_at | datetime | 是 | 更新时间 |
+| 字段名                  | 类型                         | 必填  | 业务说明                           |
+| :------------------- | :------------------------- | :-- | :----------------------------- |
+| id                   | bigint                     | 是   | 主键ID                           |
+| name                 | varchar(128)               | 是   | 课程名称                           |
+| intro                | text                       | 否   | 课程简介                           |
+| cover_image_url      | varchar(512)               | 否   | 封面图URL                         |
+| category_id          | bigint                     | 否   | 课程分类ID，关联 course_categories.id |
+| sort_priority        | int                        | 是   | 排序优先级                          |
+| status               | enum(draft,online,offline) | 是   | 课程状态（草稿/上架/下架）                 |
+| total_revenue_amount | decimal(12,2)              | 是   | 课程总收入（该课程下所有已核销订单的金额汇总，冗余字段）   |
+| created_by           | bigint                     | 否   | 创建人（后台账号）                      |
+| created_at           | datetime                   | 是   | 创建时间                           |
+| updated_at           | datetime                   | 是   | 更新时间                           |
 
 ### 7.5 `course_sessions`（课期）
 
