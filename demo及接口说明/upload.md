@@ -14,7 +14,7 @@
 
 - 后端不中转文件流，节省带宽和内存
 - 前端拿到 `publicUrl` 后可直接作为 `<img src>` 使用
-- 文件名自动带时间戳，不存在覆盖问题
+- 前端传入唯一 `uniqueId`，文件名自动拼接，保证 URL 唯一
 
 ---
 
@@ -28,9 +28,12 @@ Content-Type: application/json
 
 {
   "fileName": "avatar.png",
-  "contentType": "image/png"
+  "contentType": "image/png",
+  "uniqueId": 1712345678000
 }
 ```
+
+`uniqueId` 由前端生成（如 `Date.now()`），用于保证文件名唯一。后端会将其拼接到文件名中并原样返回，前端可通过它做请求-响应匹配。
 
 后端返回：
 
@@ -40,9 +43,10 @@ Content-Type: application/json
   "msg": "success",
   "data": {
     "fileName": "avatar.png",
+    "uniqueId": 1712345678000,
     "uploadUrl": "https://bucket.oss-cn-hangzhou.aliyuncs.com/images/...?Expires=xxx&Signature=xxx",
-    "objectKey": "images/2026/05/10/avatar_1712345678.png",
-    "publicUrl": "https://bucket.oss-cn-hangzhou.aliyuncs.com/images/2026/05/10/avatar_1712345678.png"
+    "objectKey": "images/2026/05/10/avatar_1712345678000.png",
+    "publicUrl": "https://bucket.oss-cn-hangzhou.aliyuncs.com/images/2026/05/10/avatar_1712345678000.png"
   }
 }
 ```
@@ -78,17 +82,35 @@ Content-Disposition: inline
 参考项目中的 `webSource/html/upload.html`，核心逻辑如下：
 
 ```javascript
+// 追踪所有待处理的请求，支持并发上传
+const pendingRequests = new Map();
+
 async function uploadImage(file) {
-    // 1. 拿签名
+    // 1. 拿签名（uniqueId 由前端生成，保证文件名唯一）
+    const uniqueId = Date.now();
+    pendingRequests.set(uniqueId, { fileName: file.name });
+
     const signRes = await fetch('/api/uploadSignUrl', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             fileName: file.name,
-            contentType: file.type
+            contentType: file.type,
+            uniqueId: uniqueId
         })
     });
     const signData = await signRes.json();
+
+    // 校验响应匹配：确认返回的是本次请求的结果
+    if (!pendingRequests.has(uniqueId)) {
+        throw new Error('该上传已取消');
+    }
+    if (signData.data.uniqueId !== uniqueId || signData.data.fileName !== file.name) {
+        pendingRequests.delete(uniqueId);
+        throw new Error('响应不匹配，可能收到其他请求的结果');
+    }
+    pendingRequests.delete(uniqueId);
+
     if (signData.code !== 200) {
         throw new Error('获取签名失败: ' + signData.msg);
     }

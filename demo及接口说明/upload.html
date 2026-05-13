@@ -110,6 +110,9 @@
     const API_BASE = '';
     let selectedFile = null;
 
+    // 追踪所有待处理的请求，key 为 uniqueId，支持并发上传
+    const pendingRequests = new Map();
+
     const fileInput = document.getElementById('fileInput');
     const uploadPreview = document.getElementById('uploadPreview');
     const fileTip = document.getElementById('fileTip');
@@ -147,16 +150,47 @@
         uploadBtn.disabled = true;
         uploadStatus.textContent = '1. 正在请求上传签名...';
 
+        const reqFileName = selectedFile.name;
+        const reqUniqueId = Date.now();
+
+        // 注册本次请求，支持多个并发请求
+        pendingRequests.set(reqUniqueId, { fileName: reqFileName });
+
         try {
             const signRes = await fetch(API_BASE + '/api/uploadSignUrl', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    fileName: selectedFile.name,
-                    contentType: selectedFile.type
+                    fileName: reqFileName,
+                    contentType: selectedFile.type,
+                    uniqueId: reqUniqueId
                 })
             });
             const signData = await signRes.json();
+
+            // 校验响应是否匹配本次请求
+            if (!pendingRequests.has(reqUniqueId)) {
+                // 这个请求已被取消，不处理结果
+                uploadStatus.textContent = '该上传已取消';
+                uploadBtn.disabled = false;
+                return;
+            }
+
+            if (signData.data && signData.data.fileName !== reqFileName) {
+                uploadStatus.textContent = '响应不匹配: 期望文件名 ' + reqFileName + '，实际 ' + signData.data.fileName;
+                pendingRequests.delete(reqUniqueId);
+                uploadBtn.disabled = false;
+                return;
+            }
+            if (signData.data && String(signData.data.uniqueId) !== String(reqUniqueId)) {
+                uploadStatus.textContent = '响应不匹配: 期望 uniqueId ' + reqUniqueId + '，实际 ' + signData.data.uniqueId;
+                pendingRequests.delete(reqUniqueId);
+                uploadBtn.disabled = false;
+                return;
+            }
+
+            // 校验通过，移除追踪
+            pendingRequests.delete(reqUniqueId);
 
             if (signData.code !== 200) {
                 uploadStatus.textContent = '获取签名失败: ' + signData.msg;
@@ -182,11 +216,12 @@
                 const publicUrl = signData.data.publicUrl;
                 uploadPreview.src = publicUrl;
                 uploadPreview.style.display = 'block';
-                uploadStatus.textContent = '上传成功!\nobjectKey: ' + objectKey + '\npublicUrl: ' + publicUrl;
+                uploadStatus.textContent = '上传成功!\nfileName: ' + reqFileName + '\nuniqueId: ' + reqUniqueId + '\nobjectKey: ' + objectKey + '\npublicUrl: ' + publicUrl;
             } else {
                 uploadStatus.textContent = 'OSS 上传失败，HTTP 状态: ' + uploadRes.status;
             }
         } catch (err) {
+            pendingRequests.delete(reqUniqueId);
             uploadStatus.textContent = '请求失败: ' + err.message;
         }
 
