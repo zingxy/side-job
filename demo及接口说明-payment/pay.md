@@ -1,0 +1,768 @@
+# 支付与订单系统 HTTP 接口说明
+
+## 架构说明
+
+本系统由两层服务组成：
+
+- **C++ 后端**（端口 8080）：业务逻辑层，所有前端请求都调到这里（路径 `/api/{action}`）
+- **Go 支付服务**（端口 9090）：微信 API 对接层，负责签名/验签/AES 解密，由 C++ 内部调用
+
+**前端开发者只需要知道**：所有接口都是 `POST /api/{action}`，调 C++ 的 8080 端口。Go 服务不对外暴露接口。
+
+## 通用约定
+
+- **请求方式**：所有接口均为 `POST`
+- **请求路径**：`/api/{action}`，如 `/api/payCreate`
+- **请求体**：`application/json`
+- **响应格式**：统一 JSON 结构
+
+```json
+{
+  "code": 200,
+  "msg": "success",
+  "data": { ... }
+}
+```
+
+- **code**：`200` 成功，`400` 参数错误，`404` 未找到，`500` 服务器错误，`502` 下游服务不可用
+- **data**：业务数据，失败时可能为空或包含部分错误上下文
+
+---
+
+## 一、支付流程
+
+### 1.1 payCreate — 小程序创建订单（统一下单）
+
+**使用场景：** 小程序端客户选好课期和名额后，点击"立即支付"触发此接口。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 下单客户 ID |
+| session_id | int | 是 | 课期 ID |
+| amount | int | 是 | 总金额（分） |
+| body | string | 否 | 商品描述，默认"课程订单" |
+| open_id | string | 否 | 用户微信 OpenID |
+| type | string | 否 | 订单类型，默认 `purchase` |
+| source | string | 否 | 订单来源，默认 `mini_program` |
+| slot_quantity | int | 否 | 名额数量，默认 1 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| order_no | string | 订单号（如 `ORD20260519123456123456`） |
+| order_id | int | 订单自增 ID |
+| payment_params | object | 微信支付调起参数（见下表） |
+
+**payment_params 字段：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| appId | string | 小程序 AppID |
+| timeStamp | string | 时间戳（秒） |
+| nonceStr | string | 随机字符串 |
+| package | string | 预支付交易会话标识，格式 `prepay_id=...` |
+| signType | string | 签名算法，固定 `RSA` |
+| paySign | string | 对以上参数的签名 |
+
+**示例：**
+
+```json
+// 请求 POST /api/payCreate
+{
+  "customer_id": 1,
+  "session_id": 1,
+  "amount": 9900,
+  "body": "测试课程"
+}
+
+// 响应
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "order_no": "ORD20260519123456123456",
+    "order_id": 1,
+    "payment_params": {
+      "appId": "wx1234567890abcdef",
+      "timeStamp": "1684923456",
+      "nonceStr": "a1b2c3d4e5f6",
+      "package": "prepay_id=wx20260519123456abcdef",
+      "signType": "RSA",
+      "paySign": "MIGfMA0GCSqGSIb3DQEBAQUAA4..."
+    }
+  }
+}
+```
+
+---
+
+### 1.2 payNotify — 微信支付回调（内部接口）
+
+**使用场景：** 用户完成支付后，微信服务器异步通知支付结果。此接口由 **Nginx 反向代理直接路由到 Go 支付服务**（不经过 C++），Go 负责验签和解密后再通知 C++ 更新订单状态。**前端不需要调用此接口。**
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| out_trade_no | string | 是 | 订单号 |
+| trade_state | string | 是 | 支付状态：`SUCCESS` / `FAIL` |
+| paid_at | string | 否 | 到账时间，不传则用当前时间 |
+
+**响应：**
+
+- 成功返回 `{ "code": 200, "msg": "success" }`
+- 已处理的订单幂等直接返回成功（同一订单重复回调不会重复更新）
+- `trade_state=SUCCESS` 时：订单 `status → paid`，小程序订单 `verification_status → auto_verified`，支付流水 `status → success`
+- `trade_state` 非成功时：订单 `status → closed`，支付流水 `status → failed`，写入操作日志 `pay_failed`
+
+**补充说明：**
+- 如果回调丢失（网络异常等），定时查单任务（`startOrderCheckTimer`）会每隔 5 分钟兜底扫描超 30 分钟仍为 `pending_payment` 的订单，主动调微信查单 API 补偿。
+- 并发回调保护：数据库层使用 `WHERE status='pending_payment'` 原子更新，防止同一订单被并发回调重复处理。
+
+---
+
+## 二、订单查询
+
+### 2.1 payOrderQuery — 订单详情查询
+
+**使用场景：**
+- 前端支付完成后跳转到订单详情页查看支付结果
+- 业务员后台查询某个订单的详细信息
+- 退款申请前先查订单确认状态和金额
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| order_no | string | 是 | 订单号 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| id | int | 订单自增 ID |
+| order_no | string | 订单号 |
+| customer_id | int | 客户 ID |
+| session_id | int | 课期 ID |
+| type | string | 订单类型：`purchase`（购买）/ `recharge`（充值） |
+| source | string | 订单来源：`mini_program`（小程序）/ `offline`（线下代录） |
+| slot_quantity | int | 名额数量 |
+| unit_price_amount | int | 单价（分） |
+| total_amount | int | 总金额（分） |
+| status | string | 支付状态（见下方枚举） |
+| verification_status | string | 核销状态（见下方枚举） |
+| payment_no | string | 支付流水号（小程序订单查 payment_records，线下订单取 external_payment_no） |
+| external_payment_no | string | 线下支付单号（线下订单才有） |
+| payment_proof_url | string | 付款凭证图片 URL |
+| refund_amount | int | 已退金额（分），状态为 completed 的退款累加 |
+| refundable_amount | int | 可退余额（分），= total_amount - refund_amount |
+| has_pending_refund | bool | 是否有进行中（pending 状态）的退款 |
+| payment_deadline_at | string | 支付截止时间 |
+| paid_at | string | 支付时间 |
+| verified_at | string | 核销时间 |
+| verified_by | int | 核销人 ID（0 表示未指定） |
+| reviewed_at | string | 财务审核时间（通过/拒绝都记录） |
+| rejected_reason | string | 拒绝原因 |
+| remark | string | 业务员备注（供财务审核参考） |
+| created_by_staff_id | int | 业务员 ID（线下订单创建人） |
+| deleted_at | string | 软删除时间（不为空表示已删除） |
+| created_at | string | 创建时间 |
+| updated_at | string | 更新时间 |
+
+**示例：**
+
+```json
+// 请求 POST /api/payOrderQuery
+{ "order_no": "ORD20260519123456123456" }
+
+// 响应
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "id": 1,
+    "order_no": "ORD20260519123456123456",
+    "customer_id": 1,
+    "session_id": 1,
+    "type": "purchase",
+    "source": "mini_program",
+    "total_amount": 9900,
+    "status": "paid",
+    "verification_status": "auto_verified",
+    "payment_no": "PAY20260519123456654321",
+    "refund_amount": 0,
+    "refundable_amount": 9900,
+    "has_pending_refund": false,
+    "created_at": "2026-05-19 12:34:56"
+  }
+}
+```
+
+---
+
+### 2.2 payOrderList — 按客户查询订单列表
+
+**使用场景：**
+- 小程序"我的订单"页面，展示客户所有订单
+- 业务员后台查看某个客户的历史订单
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 客户 ID |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 订单数组，每项字段同 `payOrderQuery` 的 data，额外包含： |
+| refunds | array | 该订单的退款明细数组（仅当有退款记录时返回，见下方退款明细字段） |
+| refund_amount | int | 已退总金额（分） |
+| refundable_amount | int | 可退余额（分） |
+| has_pending_refund | bool | 是否有进行中的退款 |
+
+**退款明细字段（list[].refunds[]）：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| refund_no | string | 退款单号 |
+| status | string | 退款状态 |
+| amount | int | 退款金额（分） |
+| type | string | 退款类型：`full` / `partial` |
+| channel | string | 退款渠道 |
+| source | string | 退款来源：`customer` / `staff` |
+| reason | string | 退款原因 |
+| created_at | string | 申请时间 |
+| handled_at | string | 审核时间 |
+| rejected_reason | string | 拒绝原因 |
+
+---
+
+### 2.3 payOrderAllList — 全部订单查询
+
+**使用场景：** 财务/管理员查看系统全部订单，支持时间范围筛选。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
+| end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
+
+- 同时传 `start_time` + `end_time`：查询该时间范围内的订单
+- 只传 `start_time`：查询该时间之后的订单
+- 只传 `end_time`：查询该时间之前的订单
+- 都不传：返回最新 200 条（按 created_at 倒序）
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 订单数组，字段同 `payOrderQuery` 的 data，额外包含 `payment_no`、`refund_amount`、`refundable_amount`、`has_pending_refund`，以及 `refunds` 退款明细数组（仅当有退款记录时返回，字段同 `payOrderList` 的 `refunds`） |
+
+---
+
+## 三、线下订单
+
+### 3.1 payOrderCreateOffline — 创建线下订单
+
+**使用场景：** 业务员在线下收到客户转账/现金后，在后台代录订单。订单创建后状态为 `paid`，`verification_status=pending_review`，等待财务审核。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 客户 ID |
+| session_id | int | 是 | 课期 ID |
+| amount | int | 是 | 总金额（分） |
+| slot_quantity | int | 否 | 名额数量，默认 1 |
+| type | string | 否 | 订单类型，默认 `purchase` |
+| external_payment_no | string | 否 | 线下支付单号（转账流水号等） |
+| payment_proof_url | string | 否 | 付款凭证图片 URL |
+| created_by_staff_id | int | 否 | 业务员 ID |
+| remark | string | 否 | 备注（供财务审核参考） |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| order_id | int | 订单自增 ID |
+| order_no | string | 订单号 |
+| status | string | 固定 `paid` |
+
+---
+
+### 3.2 payOrderReview — 财务审核线下订单
+
+**使用场景：** 财务人员登录后台，查看业务员提交的线下订单，核对转账凭证后决定通过或拒绝。只有 `verification_status=pending_review` 的订单可审核。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| order_no | string | 是 | 订单号 |
+| action | string | 是 | `approve`（通过）/ `reject`（拒绝） |
+| verified_by | int | 是 | 审核人 ID |
+| rejected_reason | string | 否 | 拒绝原因（action=reject 时建议填写） |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| order_no | string | 订单号 |
+| status | string | 订单支付状态 |
+| verification_status | string | 核销状态：`manual_verified`（通过）/ `rejected`（拒绝） |
+
+---
+
+### 3.3 payOrderResubmit — 业务员重新提交被拒订单
+
+**使用场景：** 财务拒绝某笔线下订单后（如凭证不清晰），业务员补充材料后重新提交审核。只有 `verification_status=rejected` 的订单可重新提交。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| order_no | string | 是 | 订单号 |
+| operator_id | int | 是 | 操作人 ID（当前登录业务员 ID） |
+| external_payment_no | string | 否 | 修改后的线下支付单号 |
+| payment_proof_url | string | 否 | 修改后的付款凭证 URL |
+| session_id | int | 否 | 修改后的课期 ID |
+| total_amount | int | 否 | 修改后的金额（仅被拒绝订单可修改） |
+| slot_quantity | int | 否 | 修改后的名额数量（仅被拒绝订单可修改） |
+| customer_id | int | 否 | 修改后的客户 ID（仅被拒绝订单可修改） |
+| remark | string | 否 | 修改后的备注 |
+
+**注意：** 待审核订单（`pending_review`）不可修改金额/客户等核心字段，只允许修改备注、凭证、课期。
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| order_no | string | 订单号 |
+| verification_status | string | 固定 `pending_review` |
+
+---
+
+### 3.4 payOrderClose — 关闭订单
+
+**使用场景：** 手动关闭超期未支付的订单，释放课期名额。仅 `pending_payment` 状态的订单可关闭。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| order_no | string | 是 | 订单号 |
+| operator_id | int | 是 | 操作人 ID（当前登录用户 ID） |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| order_no | string | 订单号 |
+| status | string | 固定 `closed` |
+
+---
+
+### 3.5 payOrderDelete — 业务员软删除订单
+
+**使用场景：** 业务员录入的线下订单有误，在审核通过前可以删除。仅线下订单可删除，且仅 `verification_status=pending_review`（待审核）或 `rejected`（审核拒绝）的状态允许删除。已核销/已退款的订单不可删除。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| order_no | string | 是 | 订单号 |
+| operator_id | int | 是 | 操作人 ID（当前登录用户 ID） |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| order_no | string | 订单号 |
+| deleted_at | string | 软删除时间 |
+
+---
+
+## 四、退款流程
+
+### 4.1 payRefund — 退款申请
+
+**使用场景：**
+- 小程序端：客户在订单详情页点击"申请退款"，前端判断名额可退性后提交
+- 业务员后台：选中订单后点击"退款"，填写退款金额和原因提交
+
+前端负责判断名额是否可退（签到状态、座位分配、转赠状态、开课时间等），后端只校验订单本身的状态和金额。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| order_no | string | 是 | 订单号 |
+| applicant_customer_id | int | 是 | 申请人客户 ID（退款归属） |
+| amount | int | 是 | 退款金额（分） |
+| reason | string | 否 | 退款原因 |
+| source | string | 否 | 退款来源：`customer`（客户申请）/ `staff`（工作人员），默认 `customer` |
+| operator_id | int | staff 时必填 | 操作人 ID，`source=staff` 时必填，`source=customer` 时可省略 |
+
+**后端校验规则：**
+
+1. 订单必须存在
+2. 订单未被软删除（`deleted_at IS NULL`）
+3. 订单状态为 `paid` / `verified` / `refunding` / `refunded`
+4. 退款金额 ≤ 订单总金额
+5. 退款金额 + 已完成退款总额 ≤ 订单总金额
+6. 同一订单有 `pending` 状态的退款时不可重复申请（并发保护）
+7. 同一订单有进行中的退款时，不允许重复申请（并发保护 + 幂等控制）
+8. 线下订单（`source=offline`）只能由工作人员发起退款（`source=staff`）
+
+**退款类型自动判断：** 后端根据退款金额自动判定 `type`：
+- 等于订单总金额 → `full`（全额退款）
+- 小于订单总金额 → `partial`（部分退款）
+
+审核通过时，`full` 退款将订单状态改为 `refunded`，`partial` 退款改为 `refunding`（可继续申请后续部分退款）。
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| refund_no | string | 退款单号（如 `RF20260519123456123456`） |
+| refund_id | int | 退款自增 ID |
+| status | string | 固定 `pending` |
+| type | string | 退款类型：`full`（全额）/ `partial`（部分），自动判断 |
+
+**示例：**
+
+```json
+// 请求 POST /api/payRefund（客户申请）
+{
+  "order_no": "ORD20260519123456123456",
+  "applicant_customer_id": 1,
+  "amount": 9900,
+  "reason": "个人原因申请退款",
+  "source": "customer"
+}
+
+// 请求 POST /api/payRefund（工作人员代申请）
+{
+  "order_no": "ORD20260519123456123456",
+  "applicant_customer_id": 1,
+  "amount": 9900,
+  "reason": "客户要求退款",
+  "source": "staff",
+  "operator_id": 1
+}
+
+// 响应
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "refund_no": "RF20260519123456123456",
+    "refund_id": 1,
+    "status": "pending",
+    "type": "full"
+  }
+}
+```
+
+---
+
+### 4.2 payRefundReview — 退款审核
+
+**使用场景：** 财务人员登录后台，查看待审核的退款申请，逐一审核。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| refund_no | string | 是 | 退款单号 |
+| action | string | 是 | `approve`（通过）/ `reject`（拒绝） |
+| handled_by | int | 否 | 审核人 ID |
+| rejected_reason | string | 否 | 拒绝原因（action=reject 时建议填写） |
+
+**审核通过时：**
+- 小程序订单（`channel=wechat_original_route`）：先调微信退款 API，成功后更新退款单状态为 `completed`
+- 线下订单（`channel=offline_manual`）：直接更新退款单状态为 `completed`
+- 同时根据退款类型更新订单状态：`full` → `refunded`，`partial` → `refunding`
+
+**审核拒绝时：** 更新退款单状态为 `rejected`，订单状态不变，前端可重新申请退款。
+
+只有 `pending` 状态的退款可审核（幂等保护，已审核的不允许再次审核）。
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| refund_no | string | 退款单号 |
+| status | string | 更新后的退款状态：`completed` / `rejected` |
+| order_status | string | 更新后的订单状态（仅 action=approve 时返回）：`refunded` / `refunding` |
+
+---
+
+## 五、退款查询
+
+### 5.1 payRefundQuery — 退款详情查询
+
+**使用场景：** 财务审核前查看退款申请的完整信息（金额、原因、申请人等），辅助审核决策。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| refund_no | string | 是 | 退款单号 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| id | int | 退款自增 ID |
+| refund_no | string | 退款单号 |
+| order_id | int | 关联订单 ID |
+| applicant_customer_id | int | 申请人客户 ID |
+| source | string | 退款来源：`customer` / `staff` |
+| type | string | 退款类型：`full` / `partial` |
+| channel | string | 退款渠道：`wechat_original_route`（微信原路退回）/ `offline_manual`（线下人工退款） |
+| status | string | 退款状态（见下方枚举） |
+| amount | int | 退款金额（分） |
+| reason | string | 退款原因 |
+| rejected_reason | string | 拒绝原因 |
+| handled_by | int | 审核人 ID |
+| handled_at | string | 审核时间 |
+| created_at | string | 申请时间 |
+
+---
+
+### 5.2 payRefundList — 按订单查询退款记录
+
+**使用场景：** 在订单详情页展示该订单的所有退款历史。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| order_no | string | 是 | 订单号 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 退款记录数组，每条记录包含： |
+
+**退款记录字段（list[].）：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| id | int | 退款自增 ID |
+| refund_no | string | 退款单号 |
+| order_id | int | 关联订单 ID |
+| order_no | string | 关联订单号 |
+| order_total_amount | int | 关联订单总金额（分） |
+| order_status | string | 关联订单支付状态 |
+| applicant_customer_id | int | 申请人客户 ID |
+| source | string | 退款来源：`customer` / `staff` |
+| type | string | 退款类型：`full` / `partial` |
+| channel | string | 退款渠道 |
+| status | string | 退款状态 |
+| amount | int | 退款金额（分） |
+| reason | string | 退款原因 |
+| rejected_reason | string | 拒绝原因 |
+| handled_by | int | 审核人 ID |
+| handled_at | string | 审核时间 |
+| created_at | string | 申请时间 |
+| updated_at | string | 更新时间 |
+
+---
+
+### 5.3 payRefundPendingList — 待审核退款列表（财务专用）
+
+**使用场景：** 财务后台查看待处理退款申请。
+
+**请求参数：** 无
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 待审核（status=`pending`）退款记录，字段： |
+
+**退款记录字段（list[].）：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| id | int | 退款自增 ID |
+| refund_no | string | 退款单号 |
+| order_id | int | 关联订单 ID |
+| applicant_customer_id | int | 申请人客户 ID |
+| source | string | 退款来源：`customer` / `staff` |
+| type | string | 退款类型：`full` / `partial` |
+| channel | string | 退款渠道 |
+| amount | int | 退款金额（分） |
+| reason | string | 退款原因 |
+| created_at | string | 申请时间 |
+
+---
+
+### 5.4 payRefundAllList — 全部退款记录
+
+**使用场景：** 财务或运营查看所有退款记录，支持时间范围筛选。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
+| end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
+
+- 时间筛选规则同 `payOrderAllList`，都不传时返回最新 200 条。
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 退款记录数组，每条记录包含退款基础字段（同 `payRefundList`）以及关联订单信息： |
+| order_no | string | 关联订单号 |
+| order_total_amount | int | 关联订单总金额（分） |
+| order_status | string | 关联订单支付状态 |
+
+---
+
+## 六、操作流水
+
+### 6.1 payOperationLogList — 订单操作流水
+
+**使用场景：** 订单详情页底部展示该订单的完整操作历史，用于追溯。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| order_no | string | 是 | 订单号 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 操作记录数组 |
+
+**操作记录字段：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| id | int | 流水自增 ID |
+| order_no | string | 订单号 |
+| operator_id | int | 操作人 ID |
+| operator_role | string | 操作人角色：`sales`（业务员）/ `finance`（财务）/ `customer`（客户） |
+| action_type | string | 操作类型（见下方枚举） |
+| from_status | string | 变更前状态 |
+| to_status | string | 变更后状态 |
+| reason | string | 操作原因/拒绝原因 |
+| proof_snapshot | string | 凭证快照（JSON） |
+| created_at | string | 操作时间 |
+
+---
+
+### 6.2 payOperationLogAll — 全部操作流水
+
+**使用场景：** 管理员/运营查看所有订单的操作流水，全局审计追踪。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
+| end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
+
+- 时间筛选规则同 `payOrderAllList`，都不传时返回最新 200 条。
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 全部操作记录数组，字段同 `payOperationLogList` |
+
+---
+
+## 七、其他
+
+### 7.1 payHealth — Go 支付服务健康检查
+
+**使用场景：** 运维或启动时检查 Go 支付服务（负责微信 API 调用）是否正常。
+
+**请求参数：** 无
+
+**响应：**
+
+```json
+{
+  "code": 200,
+  "msg": "Go pay service is alive",
+  "data": { ... }
+}
+```
+
+Go 服务不可达时返回 `502`。
+
+---
+
+## 状态枚举值
+
+### 订单支付状态（orders.status）
+
+| 值 | 含义 | 说明 |
+| :--- | :--- | :--- |
+| `pending_payment` | 待支付 | 小程序订单创建后、未支付前 |
+| `paid` | 已支付 | 支付成功，但尚未核销或财务审核 |
+| `verified` | 已核销 | 订单已生效（系统自动核销后更新为此状态） |
+| `rejected` | 已拒绝 | 财务审核拒绝（仅限线下订单） |
+| `refunding` | 部分退款 | 已有一笔或多笔部分退款完成，可继续退款 |
+| `refunded` | 已退款 | 全额退款完成，不可再退 |
+| `closed` | 已关闭 | 超时未支付或支付失败被关闭 |
+
+### 订单核销状态（orders.verification_status）
+
+| 值 | 含义 | 说明 |
+| :--- | :--- | :--- |
+| `none` | 未核销 | 初始状态（小程序订单创建后或线下订单被拒后） |
+| `auto_verified` | 自动核销 | 小程序支付成功时系统自动核销（verified_by=-1） |
+| `manual_verified` | 人工核销 | 财务审核通过后标记 |
+| `pending_review` | 待审核 | 线下订单创建后等待财务审核 |
+| `rejected` | 审核拒绝 | 财务拒绝线下订单 |
+
+### 退款状态（refunds.status）
+
+| 值 | 含义 | 说明 |
+| :--- | :--- | :--- |
+| `pending` | 待处理 | 退款申请已提交，等待财务审核 |
+| `rejected` | 已拒绝 | 财务审核拒绝退款 |
+| `completed` | 已完成 | 退款已到账（审核通过后直接设为 completed） |
+| `cancelled` | 已取消 | 退款申请被取消 |
+
+### 支付流水状态（payment_records.status）
+
+| 值 | 含义 | 说明 |
+| :--- | :--- | :--- |
+| `pending` | 待支付 | 已创建支付流水，等待用户支付 |
+| `success` | 支付成功 | 用户已完成支付 |
+| `failed` | 支付失败 | 支付失败或用户取消 |
+| `closed` | 已关闭 | 支付超时关闭 |
+
+### 操作类型（action_type）
+
+| 值 | 含义 |
+| :--- | :--- |
+| `create_order` | 业务员/系统提交订单 |
+| `approve` | 财务审核通过 |
+| `reject` | 财务审核拒绝 |
+| `resubmit` | 业务员修改后重新提交 |
+| `close` | 关闭订单 |
+| `delete` | 删除订单（软删除） |
+| `pay_failed` | 支付失败 |
+| `refund_apply` | 申请退款 |
+| `refund_approve` | 退款审核通过 |
+| `refund_reject` | 退款审核拒绝 |
+| `refund_fail` | 微信退款 API 调用失败 |

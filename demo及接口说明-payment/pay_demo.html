@@ -1,0 +1,1080 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>支付与订单测试</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; color: #333; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 24px; color: #1a1a2e; }
+        .section { background: #fff; border-radius: 12px; padding: 20px; margin-bottom: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+        .section h2 { font-size: 18px; margin-bottom: 16px; padding-bottom: 8px; border-bottom: 2px solid #e8e8e8; color: #16213e; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 14px; color: #666; margin-bottom: 4px; }
+        .form-group input, .form-group select, .form-group textarea {
+            width: 100%; padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px;
+            font-size: 14px; transition: border-color 0.2s;
+        }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+            outline: none; border-color: #4361ee;
+        }
+        .btn {
+            display: inline-block; padding: 10px 20px; border: none; border-radius: 6px;
+            font-size: 14px; cursor: pointer; color: #fff; transition: opacity 0.2s;
+        }
+        .btn:hover { opacity: 0.85; }
+        .btn-primary { background: #4361ee; }
+        .btn-success { background: #2d6a4f; }
+        .btn-danger { background: #e63946; }
+        .btn-warning { background: #f4a261; color: #333; }
+        .btn-group { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+        .result { background: #f8f9fa; border: 1px solid #e9ecef; border-radius: 6px;
+            padding: 12px; margin-top: 12px; font-family: monospace; font-size: 13px;
+            white-space: pre-wrap; max-height: 300px; overflow-y: auto; word-break: break-all; }
+        .result.success { border-color: #2d6a4f; background: #f0fdf4; }
+        .result.error { border-color: #e63946; background: #fef2f2; }
+        .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-right: 4px; }
+        .tag-pending { background: #fef3c7; color: #92400e; }
+        .tag-paid { background: #dbeafe; color: #1e40af; }
+        .tag-verified { background: #d1fae5; color: #065f46; }
+        .tag-rejected { background: #fee2e2; color: #991b1b; }
+        .tag-closed { background: #e5e7eb; color: #374151; }
+        .tag-refunded { background: #fdba74; color: #9a3412; font-weight: 600; }
+        .tag-refunding { background: #a78bfa; color: #5b21b6; font-weight: 600; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 9999; justify-content: center; align-items: center; cursor: pointer; }
+        .modal-overlay.active { display: flex; }
+        .modal-overlay img { max-width: 90vw; max-height: 90vh; border-radius: 8px; box-shadow: 0 4px 24px rgba(0,0,0,0.3); cursor: default; }
+        .table-wrapper { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+        th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #e5e7eb; font-size: 13px; white-space: nowrap; }
+        th { background: #f8f9fa; color: #666; font-weight: 600; }
+        .detail-table td:first-child { color: #666; font-weight: 600; width: 100px; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>支付与订单测试面板</h1>
+
+    <!-- 1. 小程序支付下单 -->
+    <div class="section">
+        <h2>1. 小程序支付下单（模拟）</h2>
+        <div class="form-group">
+            <label>客户 ID</label>
+            <input type="number" id="pay_customer_id" value="1">
+        </div>
+        <div class="form-group">
+            <label>课期 ID</label>
+            <input type="number" id="pay_session_id" value="1">
+        </div>
+        <div class="form-group">
+            <label>金额（分）</label>
+            <input type="number" id="pay_amount" value="9900">
+        </div>
+        <div class="form-group">
+            <label>商品描述</label>
+            <input type="text" id="pay_body" value="测试课程">
+        </div>
+        <button class="btn btn-primary" onclick="payCreate()">创建订单</button>
+        <div id="payCreateResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- 2. 线下订单创建 -->
+    <div class="section">
+        <h2>2. 线下订单创建（业务员）</h2>
+        <div class="form-group">
+            <label>客户 ID</label>
+            <input type="number" id="offline_customer_id" value="1">
+        </div>
+        <div class="form-group">
+            <label>课期 ID</label>
+            <input type="number" id="offline_session_id" value="1">
+        </div>
+        <div class="form-group">
+            <label>金额（分）</label>
+            <input type="number" id="offline_amount" value="9900">
+        </div>
+        <div class="form-group">
+            <label>线下付款单号</label>
+            <input type="text" id="offline_payment_no" placeholder="如：转账流水号">
+        </div>
+        <div class="form-group">
+            <label>付款凭证图片（选图后自动上传到 OSS）</label>
+            <input type="file" id="offline_proof_file" accept="image/*">
+            <div id="uploadProgress" style="display:none; margin-top:8px; color:#666; font-size:13px;">正在上传...</div>
+            <div id="uploadPreview" style="display:none; margin-top:8px;"></div>
+        </div>
+        <input type="hidden" id="offline_proof_url">
+        <div class="form-group">
+            <label>业务员 ID</label>
+            <input type="number" id="offline_staff_id" value="1">
+        </div>
+        <div class="form-group">
+            <label>备注（选填，供财务审核参考）</label>
+            <input type="text" id="offline_remark" placeholder="如：客户已转账9900元/凭证后补">
+        </div>
+        <button class="btn btn-primary" onclick="createOffline()">创建线下订单</button>
+        <div id="offlineResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- 3. 订单查询 -->
+    <div class="section">
+        <h2>3. 订单查询</h2>
+        <div class="btn-group" style="margin-top:0">
+            <div class="form-group" style="flex:1">
+                <input type="text" id="query_order_no" placeholder="输入订单号">
+            </div>
+            <button class="btn btn-primary" onclick="queryOrder()">查询详情</button>
+        </div>
+        <div class="form-group" style="margin-top:12px">
+            <label>按客户 ID 查询列表</label>
+            <div class="btn-group" style="margin-top:4px">
+                <input type="number" id="query_customer_id" value="1" style="width:120px">
+                <button class="btn btn-primary" onclick="queryOrderList()">查询列表</button>
+            </div>
+        </div>
+        <div id="queryResult" class="result" style="display:none"></div>
+        <div id="queryListResult" style="display:none"></div>
+    </div>
+
+    <!-- 3B. 全部订单查询 -->
+    <div class="section">
+        <h2>3B. 全部订单查询（最近200条）</h2>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+            <div class="form-group" style="flex:1;min-width:180px">
+                <label>起始时间（可选）</label>
+                <input type="text" id="all_order_start" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+            <div class="form-group" style="flex:1;min-width:180px">
+                <label>结束时间（可选）</label>
+                <input type="text" id="all_order_end" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+            <div class="form-group">
+                <button class="btn btn-primary" onclick="queryAllOrders()">查询</button>
+            </div>
+        </div>
+        <div id="allOrderListResult" style="display:none"></div>
+    </div>
+
+    <!-- 4. 财务审核 -->
+    <div class="section">
+        <h2>4. 财务审核线下订单</h2>
+        <div class="form-group">
+            <label>审核人 ID</label>
+            <input type="number" id="review_operator_id" value="1">
+        </div>
+        <div class="btn-group" style="margin-top:0">
+            <input type="text" id="review_order_no" placeholder="输入订单号" style="flex:1">
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-success" onclick="reviewOrder('approve')">审核通过</button>
+            <button class="btn btn-danger" onclick="reviewOrder('reject')">审核拒绝</button>
+        </div>
+        <div class="form-group" style="margin-top:8px">
+            <label>拒绝原因（仅拒绝时填写）</label>
+            <input type="text" id="review_reason" placeholder="如：凭证不清晰">
+        </div>
+        <div id="reviewResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- 5. 关闭订单 -->
+    <div class="section">
+        <h2>5. 关闭订单</h2>
+        <div class="form-group">
+            <label>操作人 ID</label>
+            <input type="number" id="close_operator_id" value="1">
+        </div>
+        <div class="btn-group" style="margin-top:0">
+            <input type="text" id="close_order_no" placeholder="输入订单号" style="flex:1">
+            <button class="btn btn-warning" onclick="closeOrder()">关闭订单</button>
+        </div>
+        <div id="closeResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- 6. 模拟微信回调 -->
+    <div class="section">
+        <h2>6. 模拟微信回调（直接通知 Go）</h2>
+        <div class="btn-group" style="margin-top:0">
+            <input type="text" id="callback_order_no" placeholder="输入订单号" style="flex:1">
+            <button class="btn btn-success" onclick="mockCallback()">发送成功回调</button>
+        </div>
+        <div id="callbackResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- 7. 退款申请 -->
+    <div class="section">
+        <h2>7. 退款申请</h2>
+        <div class="form-group">
+            <label>订单号</label>
+            <input type="text" id="refund_order_no" placeholder="如：ORD20260523120000123456">
+        </div>
+        <div class="form-group">
+            <label>申请人客户 ID</label>
+            <input type="number" id="refund_applicant_id" value="1">
+        </div>
+        <div class="form-group">
+            <label>退款金额（分）</label>
+            <input type="number" id="refund_amount" value="9900">
+        </div>
+        <div class="form-group">
+            <label>退款原因</label>
+            <input type="text" id="refund_reason" placeholder="如：个人原因申请退款">
+        </div>
+        <div class="form-group">
+            <label>退款来源</label>
+            <select id="refund_source">
+                <option value="customer">客户申请（小程序）</option>
+                <option value="staff">后台工作人员发起</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>操作人 ID（工作人员发起时必填）</label>
+            <input type="number" id="refund_operator_id" value="1">
+        </div>
+        <button class="btn btn-warning" onclick="applyRefund()">提交退款申请</button>
+        <div id="refundResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- 8. 退款审核 -->
+    <div class="section">
+        <h2>8. 退款审核（财务）</h2>
+        <button class="btn btn-primary" onclick="loadPendingRefunds()">刷新待审核退款列表</button>
+        <div id="pendingRefundsList" style="display:none; margin-top:12px;"></div>
+        <div id="refundInfoPreview" style="display:none; margin-top:12px;"></div>
+        <input type="hidden" id="review_refund_no">
+        <div id="refundAuditForm" style="display:none; margin-top:12px; padding-top:12px; border-top:1px solid #e5e7eb;">
+            <div class="form-group">
+                <label>审核人 ID</label>
+                <input type="number" id="refund_handled_by" value="1">
+            </div>
+            <div class="btn-group">
+                <button class="btn btn-success" onclick="reviewRefund('approve')">审核通过</button>
+                <button class="btn btn-danger" onclick="reviewRefund('reject')">审核拒绝</button>
+            </div>
+            <div class="form-group" style="margin-top:8px">
+                <label>拒绝原因（仅拒绝时填写）</label>
+                <input type="text" id="refund_reject_reason" placeholder="如：已上课不可退款">
+            </div>
+        </div>
+        <div id="refundReviewResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- 9. 退款记录查询 -->
+    <div class="section">
+        <h2>9. 退款记录查询</h2>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+            <div class="form-group" style="flex:1;min-width:180px">
+                <label>起始时间（可选）</label>
+                <input type="text" id="refund_start" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+            <div class="form-group" style="flex:1;min-width:180px">
+                <label>结束时间（可选）</label>
+                <input type="text" id="refund_end" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+            <div class="form-group">
+                <button class="btn btn-primary" onclick="queryAllRefunds()">查询全部</button>
+            </div>
+        </div>
+        <div class="btn-group" style="margin-top:8px">
+            <div class="form-group" style="flex:1">
+                <input type="text" id="refund_query_order_no" placeholder="输入订单号">
+            </div>
+            <button class="btn btn-primary" onclick="queryRefundList()">按订单查询</button>
+        </div>
+        <div id="refundListResult" style="display:none"></div>
+    </div>
+
+    <!-- 10. 订单操作流水 -->
+    <div class="section">
+        <h2>10. 订单操作流水</h2>
+        <div class="btn-group" style="margin-top:0">
+            <input type="text" id="log_order_no" placeholder="输入订单号" style="flex:1">
+            <button class="btn btn-primary" onclick="queryOperationLog()">查询操作流水</button>
+        </div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-top:12px;">
+            <div class="form-group" style="flex:1;min-width:180px">
+                <label>起始时间（可选）</label>
+                <input type="text" id="log_start" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+            <div class="form-group" style="flex:1;min-width:180px">
+                <label>结束时间（可选）</label>
+                <input type="text" id="log_end" placeholder="YYYY-MM-DD HH:MM:SS">
+            </div>
+            <div class="form-group">
+                <button class="btn btn-primary" onclick="queryOperationLogAll()">查询全部（最近200条）</button>
+            </div>
+        </div>
+        <div id="operationLogResult" style="display:none"></div>
+    </div>
+
+    <!-- 11. 业务员：修改/删除订单 -->
+    <div class="section">
+        <h2>11. 业务员：修改/删除订单</h2>
+        <div class="form-group">
+            <label>操作人 ID</label>
+            <input type="number" id="resubmit_operator_id" value="1">
+        </div>
+        <div class="btn-group" style="margin-top:0">
+            <input type="text" id="resubmit_order_no" placeholder="输入订单号" style="flex:1">
+            <button class="btn btn-primary" onclick="loadOrderForEdit()">加载订单信息</button>
+        </div>
+        <div id="resubmitOrderInfo" style="display:none; margin-top:8px; color:#666; font-size:13px;"></div>
+        <div class="form-group" style="margin-top:12px">
+            <label>线下付款单号（选填）</label>
+            <input type="text" id="resubmit_external_no" placeholder="修改后的付款单号">
+        </div>
+        <div class="form-group">
+            <label>金额（分，仅被拒绝订单可修改）</label>
+            <input type="number" id="resubmit_amount" placeholder="修改后的金额">
+        </div>
+        <div class="form-group">
+            <label>名额数量（选填）</label>
+            <input type="number" id="resubmit_slot_qty" placeholder="修改后的名额数量">
+        </div>
+        <div class="form-group">
+            <label>客户 ID（选填）</label>
+            <input type="number" id="resubmit_customer_id" placeholder="修改后的客户ID">
+        </div>
+        <div class="form-group">
+            <label>课期 ID（选填）</label>
+            <input type="number" id="resubmit_session_id" placeholder="修改后的课期ID">
+        </div>
+        <div class="form-group">
+            <label>付款凭证图片（选图后自动上传，替换旧图片）</label>
+            <input type="file" id="resubmit_proof_file" accept="image/*">
+            <div id="resubmitProofProgress" style="display:none; margin-top:8px; color:#666; font-size:13px;"></div>
+            <div id="resubmitProofPreview" style="display:none; margin-top:8px;"></div>
+        </div>
+        <input type="hidden" id="resubmit_proof_url">
+        <input type="hidden" id="resubmit_old_proof_url">
+        <div class="form-group">
+            <label>备注（选填）</label>
+            <input type="text" id="resubmit_remark" placeholder="修改后的备注">
+        </div>
+        <div class="btn-group">
+            <button class="btn btn-warning" onclick="resubmitOrder()">修改/重新提交</button>
+            <button class="btn btn-danger" onclick="deleteOrder()">删除订单（仅线下）</button>
+        </div>
+        <div id="resubmitResult" class="result" style="display:none"></div>
+    </div>
+</div>
+
+<!-- 图片预览模态框 -->
+<div id="imageModal" class="modal-overlay" onclick="this.classList.remove('active')">
+    <img id="imageModalImg" src="">
+</div>
+
+<script>
+function previewImage(url) {
+    var modal = document.getElementById('imageModal');
+    document.getElementById('imageModalImg').src = url;
+    modal.classList.add('active');
+}
+const API = '/api';
+
+function showResult(id, data, isError) {
+    const el = document.getElementById(id);
+    el.style.display = 'block';
+    el.className = 'result ' + (isError ? 'error' : 'success');
+    el.textContent = JSON.stringify(data, null, 2);
+}
+
+function tagFor(status, verificationStatus) {
+    const vMap = {
+        'none': 'tag-pending',
+        'auto_verified': 'tag-verified',
+        'manual_verified': 'tag-verified',
+        'pending_review': 'tag-pending',
+        'rejected': 'tag-rejected'
+    };
+    const vLabel = {
+        'none': '未核销',
+        'auto_verified': '自动核销',
+        'manual_verified': '已核销',
+        'pending_review': '待审核',
+        'rejected': '审核拒绝'
+    };
+    if (verificationStatus && vMap[verificationStatus]) {
+        return '<span class="tag ' + vMap[verificationStatus] + '">' + vLabel[verificationStatus] + '</span>';
+    }
+    const map = {
+        'pending_payment': 'tag-pending',
+        'paid': 'tag-paid',
+        'verified': 'tag-verified',
+        'rejected': 'tag-rejected',
+        'closed': 'tag-closed',
+        'refunded': 'tag-refunded'
+    };
+    const label = {
+        'pending_payment': '待支付',
+        'paid': '已支付',
+        'verified': '已核销',
+        'rejected': '已拒绝',
+        'closed': '已关闭',
+        'refunded': '已退款'
+    };
+    if (status === 'refunding') {
+        return '<span class="tag tag-refunding">部分退款</span>';
+    }
+    if (status === 'refunded') {
+        return '<span class="tag tag-refunded">已退款</span>';
+    }
+    return '<span class="tag ' + (map[status] || '') + '">' + (label[status] || status) + '</span>';
+}
+
+async function callApi(action, data) {
+    const resp = await fetch(API + '/' + action, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+    });
+    return resp.json();
+}
+
+// 1. 小程序支付
+async function payCreate() {
+    const data = {
+        customer_id: +document.getElementById('pay_customer_id').value,
+        session_id: +document.getElementById('pay_session_id').value,
+        amount: +document.getElementById('pay_amount').value,
+        body: document.getElementById('pay_body').value
+    };
+    const resp = await callApi('payCreate', data);
+    showResult('payCreateResult', resp, resp.code !== 200);
+    if (resp.data && resp.data.order_no) {
+        document.getElementById('query_order_no').value = resp.data.order_no;
+        document.getElementById('review_order_no').value = resp.data.order_no;
+        document.getElementById('close_order_no').value = resp.data.order_no;
+        document.getElementById('callback_order_no').value = resp.data.order_no;
+    }
+}
+
+// 2. 线下订单
+async function createOffline() {
+    const data = {
+        customer_id: +document.getElementById('offline_customer_id').value,
+        session_id: +document.getElementById('offline_session_id').value,
+        amount: +document.getElementById('offline_amount').value,
+        created_by_staff_id: +document.getElementById('offline_staff_id').value
+    };
+    const v1 = document.getElementById('offline_payment_no').value;
+    if (v1) data.external_payment_no = v1;
+    const v2 = document.getElementById('offline_proof_url').value;
+    if (v2) data.payment_proof_url = v2;
+    const v3 = document.getElementById('offline_remark').value;
+    if (v3) data.remark = v3;
+    const resp = await callApi('payOrderCreateOffline', data);
+    showResult('offlineResult', resp, resp.code !== 200);
+    if (resp.data && resp.data.order_no) {
+        document.getElementById('query_order_no').value = resp.data.order_no;
+        document.getElementById('review_order_no').value = resp.data.order_no;
+    }
+}
+
+// OSS 图片上传
+document.getElementById('offline_proof_file').addEventListener('change', async function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const progressEl = document.getElementById('uploadProgress');
+    const previewEl = document.getElementById('uploadPreview');
+    progressEl.style.display = 'block';
+    previewEl.style.display = 'none';
+
+    // 1. 获取预签名上传 URL
+    const signResp = await callApi('uploadSignUrl', {
+        fileName: file.name,
+        contentType: file.type || 'image/jpeg',
+        uniqueId: Date.now()
+    });
+
+    if (signResp.code !== 200 || !signResp.data) {
+        progressEl.textContent = '获取上传 URL 失败: ' + JSON.stringify(signResp);
+        progressEl.style.color = '#e63946';
+        return;
+    }
+
+    const uploadUrl = signResp.data.uploadUrl;
+    const publicUrl = signResp.data.publicUrl;
+
+    // 2. PUT 上传图片到 OSS
+    try {
+        const putResp = await fetch(uploadUrl, {
+            method: 'PUT',
+            body: file,
+            headers: { 'Content-Type': file.type || 'image/jpeg' }
+        });
+
+        if (putResp.status >= 200 && putResp.status < 300) {
+            // 3. 上传成功
+            document.getElementById('offline_proof_url').value = publicUrl;
+            progressEl.style.display = 'none';
+            previewEl.style.display = 'block';
+            previewEl.innerHTML = '<div style="color:#2d6a4f;">上传成功</div>' +
+                '<div style="font-size:12px; color:#666; margin-top:4px; word-break:break-all;">' + publicUrl + '</div>' +
+                '<img src="' + publicUrl + '" style="max-width:200px; margin-top:8px; border-radius:6px;">';
+        } else {
+            progressEl.textContent = '上传失败: HTTP ' + putResp.status;
+            progressEl.style.color = '#e63946';
+        }
+    } catch (err) {
+        progressEl.textContent = '上传异常: ' + err.message;
+        progressEl.style.color = '#e63946';
+    }
+});
+
+// 3. 查询
+async function queryOrder() {
+    const resp = await callApi('payOrderQuery', { order_no: document.getElementById('query_order_no').value });
+    if (resp.code === 200 && resp.data) {
+        const d = resp.data;
+        let html = '<div class="table-wrapper"><table class="detail-table">';
+        html += '<tr><td>订单号</td><td>' + d.order_no + '</td></tr>';
+        html += '<tr><td>支付流水号</td><td>' + (d.payment_no || '-') + '</td></tr>';
+        html += '<tr><td>课期ID</td><td>' + (d.session_id || '-') + '</td></tr>';
+        var payTag = tagFor(d.status);
+        var verifyTag = tagFor(d.status, d.verification_status);
+        if (d.has_pending_refund) {
+            payTag = '<span class="tag tag-refunding">退款进行中</span>';
+            verifyTag = '<span class="tag tag-refunding">退款进行中</span>';
+        }
+        html += '<tr><td>支付状态</td><td>' + payTag + '</td></tr>';
+        html += '<tr><td>核销状态</td><td>' + verifyTag + '</td></tr>';
+        html += '<tr><td>金额</td><td>' + d.total_amount + '分</td></tr>';
+        html += '<tr><td>已退金额</td><td>' + (d.refund_amount ? d.refund_amount + '分' : '-') + '</td></tr>';
+        html += '<tr><td>可退余额</td><td>' + (d.refundable_amount !== undefined ? d.refundable_amount + '分' : '-') + '</td></tr>';
+        html += '<tr><td>来源</td><td>' + d.source + '</td></tr>';
+        html += '<tr><td>业务员ID</td><td>' + (d.created_by_staff_id || '-') + '</td></tr>';
+        html += '<tr><td>审核员ID</td><td>' + (d.verified_by || '-') + '</td></tr>';
+        html += '<tr><td>备注</td><td>' + (d.remark || '-') + '</td></tr>';
+        html += '<tr><td>付款凭证</td><td>' + (d.payment_proof_url ? '<a href="javascript:void(0)" onclick="previewImage(\'' + d.payment_proof_url + '\')">查看图片</a>' : '-') + '</td></tr>';
+        html += '<tr><td>拒绝原因</td><td>' + (d.rejected_reason || '-') + '</td></tr>';
+        html += '<tr><td>支付时间</td><td>' + (d.paid_at || '-') + '</td></tr>';
+        html += '<tr><td>审核时间</td><td>' + (d.reviewed_at || '-') + '</td></tr>';
+        html += '<tr><td>核销时间</td><td>' + (d.verified_at || '-') + '</td></tr>';
+        html += '<tr><td>创建时间</td><td>' + d.created_at + '</td></tr>';
+        html += '</table></div>';
+        document.getElementById('queryResult').style.display = 'block';
+        document.getElementById('queryResult').className = 'result success';
+        document.getElementById('queryResult').innerHTML = html;
+        // 自动加载操作流水
+        loadOperationLog(d.order_no);
+    } else {
+        showResult('queryResult', resp, true);
+    }
+}
+
+async function queryOrderList() {
+    const resp = await callApi('payOrderList', { customer_id: +document.getElementById('query_customer_id').value });
+    if (resp.code === 200 && resp.data && resp.data.list) {
+        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>订单号</th><th>支付流水号</th><th>类型</th><th>课期ID</th><th>来源</th><th>金额</th><th>退款金额</th><th>支付状态</th><th>核销状态</th><th>业务员ID</th><th>审核员ID</th><th>备注</th><th>拒绝原因</th><th>支付时间</th><th>审核时间</th><th>创建时间</th><th>退款明细</th></tr>';
+        resp.data.list.forEach(function(o) {
+            var payTag = tagFor(o.status);
+            var verifyTag = tagFor(o.status, o.verification_status);
+            if (o.has_pending_refund) {
+                payTag = '<span class="tag tag-refunding">退款中</span>';
+                verifyTag = '<span class="tag tag-refunding">退款中</span>';
+            }
+            var refundDetail = '-';
+            if (o.refunds && o.refunds.length > 0) {
+                refundDetail = '<button class="btn btn-sm" style="padding:2px 8px;font-size:12px;" onclick="showRefundDetail(this, ' + JSON.stringify(o.refunds).replace(/"/g, '&quot;') + ')">查看(' + o.refunds.length + '笔)</button>';
+            }
+            html += '<tr><td>' + o.order_no + '</td><td>' + (o.payment_no || '-') + '</td><td>' + o.type + '</td><td>' + (o.session_id || '-') + '</td><td>' + o.source + '</td><td>' + o.total_amount + '分</td><td>' + (o.refund_amount ? o.refund_amount + '分' : '-') + '</td><td>' + payTag + '</td><td>' + verifyTag + '</td><td>' + (o.created_by_staff_id || '-') + '</td><td>' + (o.verified_by || '-') + '</td><td>' + (o.remark || '-') + '</td><td>' + (o.rejected_reason || '-') + '</td><td>' + (o.paid_at || '-') + '</td><td>' + (o.reviewed_at || '-') + '</td><td>' + o.created_at + '</td><td>' + refundDetail + '</td></tr>';
+        });
+        html += '</table></div>';
+        document.getElementById('queryListResult').style.display = 'block';
+        document.getElementById('queryListResult').innerHTML = html;
+    } else {
+        showResult('queryListResult', resp, true);
+    }
+}
+
+// 3B. 全部订单查询
+// 显示退款明细（供 queryOrderList 和 queryAllOrders 共用）
+function showRefundDetail(btn, refunds) {
+    var existing = btn.parentNode.querySelector('.refund-detail-table');
+    if (existing) { existing.remove(); return; }
+
+    const statusLabels = {
+        'pending': '待处理', 'approved': '已批准', 'rejected': '已拒绝',
+        'completed': '已完成', 'cancelled': '已取消'
+    };
+    const channelLabels = {
+        'wechat_original_route': '微信原路退回', 'offline_manual': '线下人工退款'
+    };
+    const sourceLabels = { customer: '客户申请', staff: '工作人员发起' };
+    const typeLabels = { full: '全额', partial: '部分' };
+
+    let html = '<table class="refund-detail-table" style="margin-top:6px;margin-bottom:10px;background:#f8f9fa;border-radius:6px;"><tr><th>退款单号</th><th>状态</th><th>渠道</th><th>来源</th><th>类型</th><th>金额(分)</th><th>原因</th><th>创建时间</th></tr>';
+    refunds.forEach(function(r) {
+        html += '<tr><td>' + r.refund_no + '</td><td>' + (statusLabels[r.status] || r.status) + '</td><td>' + (channelLabels[r.channel] || r.channel) + '</td><td>' + (sourceLabels[r.source] || r.source) + '</td><td>' + (typeLabels[r.type] || r.type) + '</td><td>' + r.amount + '</td><td>' + (r.reason || '-') + '</td><td>' + r.created_at + '</td></tr>';
+    });
+    html += '</table>';
+
+    var div = document.createElement('div');
+    div.innerHTML = html;
+    btn.parentNode.appendChild(div);
+}
+
+async function queryAllOrders() {
+    const data = {};
+    const start = document.getElementById('all_order_start').value;
+    const end = document.getElementById('all_order_end').value;
+    if (start) data.start_time = start;
+    if (end) data.end_time = end;
+
+    const resp = await callApi('payOrderAllList', data);
+    if (resp.code === 200 && resp.data && resp.data.list) {
+        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>订单号</th><th>支付流水号</th><th>付款凭证</th><th>类型</th><th>课期ID</th><th>来源</th><th>金额</th><th>退款金额</th><th>支付状态</th><th>核销状态</th><th>业务员ID</th><th>审核员ID</th><th>备注</th><th>拒绝原因</th><th>支付时间</th><th>审核时间</th><th>创建时间</th><th>退款明细</th></tr>';
+        resp.data.list.forEach(function(o) {
+            var payTag = tagFor(o.status);
+            var verifyTag = tagFor(o.status, o.verification_status);
+            if (o.has_pending_refund) {
+                payTag = '<span class="tag tag-refunding">退款中</span>';
+                verifyTag = '<span class="tag tag-refunding">退款中</span>';
+            }
+            var refundDetail = '-';
+            if (o.refunds && o.refunds.length > 0) {
+                refundDetail = '<button class="btn btn-sm" style="padding:2px 8px;font-size:12px;" onclick="showRefundDetail(this, ' + JSON.stringify(o.refunds).replace(/"/g, '&quot;') + ')">查看(' + o.refunds.length + '笔)</button>';
+            }
+            html += '<tr><td>' + o.order_no + '</td><td>' + (o.payment_no || '-') + '</td><td>' + (o.payment_proof_url ? '<a href="javascript:void(0)" onclick="previewImage(\'' + o.payment_proof_url + '\')">查看图片</a>' : '-') + '</td><td>' + o.type + '</td><td>' + (o.session_id || '-') + '</td><td>' + o.source + '</td><td>' + o.total_amount + '分</td><td>' + (o.refund_amount ? o.refund_amount + '分' : '-') + '</td><td>' + payTag + '</td><td>' + verifyTag + '</td><td>' + (o.created_by_staff_id || '-') + '</td><td>' + (o.verified_by || '-') + '</td><td>' + (o.remark || '-') + '</td><td>' + (o.rejected_reason || '-') + '</td><td>' + (o.paid_at || '-') + '</td><td>' + (o.reviewed_at || '-') + '</td><td>' + o.created_at + '</td><td>' + refundDetail + '</td></tr>';
+        });
+        html += '</table></div>';
+        document.getElementById('allOrderListResult').style.display = 'block';
+        document.getElementById('allOrderListResult').innerHTML = html;
+    } else {
+        showResult('allOrderListResult', resp, true);
+    }
+}
+
+// 9. 退款记录查询 - 全部记录（支持时间范围）
+async function queryAllRefunds() {
+    const data = {};
+    const start = document.getElementById('refund_start').value;
+    const end = document.getElementById('refund_end').value;
+    if (start) data.start_time = start;
+    if (end) data.end_time = end;
+
+    const resp = await callApi('payRefundAllList', data);
+    if (resp.code === 200 && resp.data && resp.data.list && resp.data.list.length > 0) {
+        renderRefundList(resp.data.list);
+    } else if (resp.code === 200) {
+        document.getElementById('refundListResult').style.display = 'block';
+        document.getElementById('refundListResult').className = 'result';
+        document.getElementById('refundListResult').innerHTML = '暂无退款记录';
+    } else {
+        showResult('refundListResult', resp, true);
+    }
+}
+
+// 9. 退款记录查询 - 按订单
+async function queryRefundList() {
+    const orderNo = document.getElementById('refund_query_order_no').value;
+    if (!orderNo) {
+        showResult('refundListResult', { msg: '请输入订单号' }, true);
+        return;
+    }
+    const resp = await callApi('payRefundList', { order_no: orderNo });
+    if (resp.code === 200 && resp.data && resp.data.list && resp.data.list.length > 0) {
+        renderRefundList(resp.data.list);
+    } else if (resp.code === 200) {
+        document.getElementById('refundListResult').style.display = 'block';
+        document.getElementById('refundListResult').className = 'result';
+        document.getElementById('refundListResult').innerHTML = '该订单暂无退款记录';
+    } else {
+        showResult('refundListResult', resp, true);
+    }
+}
+
+function renderRefundList(list) {
+    const statusLabels = {
+        'pending': '待处理',
+        'approved': '已批准',
+        'rejected': '已拒绝',
+        'completed': '已完成',
+        'cancelled': '已取消'
+    };
+    const channelLabels = {
+        'wechat_original_route': '微信原路退回',
+        'offline_manual': '线下人工退款'
+    };
+    const sourceLabels = { customer: '客户申请', staff: '工作人员发起' };
+    const typeLabels = { full: '全额', partial: '部分' };
+    let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>退款单号</th><th>订单号</th><th>状态</th><th>渠道</th><th>来源</th><th>类型</th><th>金额(分)</th><th>申请人</th><th>原因</th><th>处理时间</th><th>创建时间</th></tr>';
+    list.forEach(function(r) {
+        html += '<tr><td>' + r.refund_no + '</td><td>' + (r.order_no || '-') + '</td><td>' + (statusLabels[r.status] || r.status) + '</td><td>' + (channelLabels[r.channel] || r.channel) + '</td><td>' + (sourceLabels[r.source] || r.source) + '</td><td>' + (typeLabels[r.type] || r.type) + '</td><td>' + r.amount + '</td><td>' + r.applicant_customer_id + '</td><td>' + (r.reason || '-') + '</td><td>' + (r.handled_at || '-') + '</td><td>' + r.created_at + '</td></tr>';
+    });
+    html += '</table></div>';
+    document.getElementById('refundListResult').style.display = 'block';
+    document.getElementById('refundListResult').innerHTML = html;
+}
+
+// 4. 审核
+async function reviewOrder(action) {
+    const data = {
+        order_no: document.getElementById('review_order_no').value,
+        action: action,
+        verified_by: +document.getElementById('review_operator_id').value
+    };
+    const reason = document.getElementById('review_reason').value;
+    if (reason) data.rejected_reason = reason;
+    const resp = await callApi('payOrderReview', data);
+    showResult('reviewResult', resp, resp.code !== 200);
+}
+
+// 5. 关闭
+async function closeOrder() {
+    const resp = await callApi('payOrderClose', {
+        order_no: document.getElementById('close_order_no').value,
+        operator_id: +document.getElementById('close_operator_id').value
+    });
+    showResult('closeResult', resp, resp.code !== 200);
+}
+
+// 6. 模拟回调
+async function mockCallback() {
+    const orderNo = document.getElementById('callback_order_no').value;
+    const resp = await fetch('/api/payNotify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ out_trade_no: orderNo, trade_state: 'SUCCESS' })
+    });
+    const data = await resp.json();
+    showResult('callbackResult', data, false);
+}
+
+// 7. 退款申请
+async function applyRefund() {
+    const orderNo = document.getElementById('refund_order_no').value;
+    if (!orderNo) {
+        showResult('refundResult', { code: 400, msg: '请输入订单号' }, true);
+        return;
+    }
+
+    const data = {
+        order_no: orderNo,
+        applicant_customer_id: +document.getElementById('refund_applicant_id').value,
+        amount: +document.getElementById('refund_amount').value,
+        source: document.getElementById('refund_source').value
+    };
+    const reason = document.getElementById('refund_reason').value;
+    if (reason) data.reason = reason;
+
+    // 工作人员发起时必填操作人 ID
+    if (data.source === 'staff') {
+        data.operator_id = +document.getElementById('refund_operator_id').value;
+    }
+    const resp = await callApi('payRefund', data);
+    showResult('refundResult', resp, resp.code !== 200);
+    if (resp.data && resp.data.refund_no) {
+        document.getElementById('review_refund_no').value = resp.data.refund_no;
+    }
+}
+
+// 8. 退款审核 - 加载待审核列表
+async function loadPendingRefunds() {
+    const resp = await callApi('payRefundPendingList', {});
+    if (resp.code === 200 && resp.data && resp.data.list) {
+        const sourceLabels = { customer: '客户申请', staff: '工作人员发起' };
+        const channelLabels = { wechat_original_route: '微信原路退回', offline_manual: '线下人工退款' };
+        const typeLabels = { full: '全额', partial: '部分' };
+
+        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>退款单号</th><th>订单ID</th><th>申请人</th><th>来源</th><th>渠道</th><th>类型</th><th>金额(分)</th><th>申请原因</th><th>申请时间</th><th>操作</th></tr>';
+        resp.data.list.forEach(function(r) {
+            html += '<tr><td>' + r.refund_no + '</td><td>' + r.order_id + '</td><td>' + r.applicant_customer_id + '</td><td>' + (sourceLabels[r.source] || r.source) + '</td><td>' + (channelLabels[r.channel] || r.channel) + '</td><td>' + (typeLabels[r.type] || r.type) + '</td><td>' + r.amount + '</td><td>' + (r.reason || '-') + '</td><td>' + r.created_at + '</td><td><button class="btn btn-primary" style="padding:4px 10px;font-size:12px;" onclick="selectRefundForReview(\'' + r.refund_no + '\')">审核</button></td></tr>';
+        });
+        html += '</table></div>';
+
+        document.getElementById('pendingRefundsList').style.display = 'block';
+        document.getElementById('pendingRefundsList').innerHTML = html;
+        document.getElementById('refundInfoPreview').style.display = 'none';
+        document.getElementById('refundAuditForm').style.display = 'none';
+    } else {
+        document.getElementById('pendingRefundsList').style.display = 'block';
+        document.getElementById('pendingRefundsList').innerHTML = '<div class="result">暂无待审核退款</div>';
+    }
+}
+
+// 选择某笔退款进行审核
+async function selectRefundForReview(refundNo) {
+    document.getElementById('review_refund_no').value = refundNo;
+    await loadRefundForReview();
+    document.getElementById('refundAuditForm').style.display = 'block';
+}
+
+// 8. 退款审核 - 加载退款详情
+async function loadRefundForReview() {
+    const refundNo = document.getElementById('review_refund_no').value;
+    if (!refundNo) {
+        alert('请先输入或选择退款单号');
+        return;
+    }
+    const resp = await callApi('payRefundQuery', { refund_no: refundNo });
+    if (resp.code === 200 && resp.data) {
+        const d = resp.data;
+        const sourceLabels = { customer: '客户申请', staff: '工作人员发起' };
+        const typeLabels = { full: '全额退款', partial: '部分退款' };
+        const channelLabels = { wechat_original_route: '微信原路退回', offline_manual: '线下人工退款' };
+        const statusLabels = { pending: '待审核', approved: '已批准', rejected: '已拒绝', completed: '已完成', cancelled: '已取消' };
+        const statusColors = { pending: 'tag-pending', approved: 'tag-paid', rejected: 'tag-rejected', completed: 'tag-refunded', cancelled: 'tag-closed' };
+
+        let html = '<div class="table-wrapper"><table class="detail-table">';
+        html += '<tr><td>退款单号</td><td>' + d.refund_no + '</td></tr>';
+        html += '<tr><td>状态</td><td><span class="tag ' + (statusColors[d.status] || '') + '">' + (statusLabels[d.status] || d.status) + '</span></td></tr>';
+        html += '<tr><td>退款金额</td><td>' + d.amount + '分</td></tr>';
+        html += '<tr><td>申请人</td><td>客户ID=' + d.applicant_customer_id + '（' + (sourceLabels[d.source] || d.source) + '）</td></tr>';
+        html += '<tr><td>退款渠道</td><td>' + (channelLabels[d.channel] || d.channel) + '</td></tr>';
+        html += '<tr><td>退款类型</td><td>' + (typeLabels[d.type] || d.type) + '</td></tr>';
+        html += '<tr><td>申请原因</td><td>' + (d.reason || '-') + '</td></tr>';
+        html += '<tr><td>拒绝原因</td><td>' + (d.rejected_reason || '-') + '</td></tr>';
+        html += '<tr><td>创建时间</td><td>' + d.created_at + '</td></tr>';
+        html += '</table></div>';
+
+        document.getElementById('refundInfoPreview').style.display = 'block';
+        document.getElementById('refundInfoPreview').innerHTML = html;
+    } else {
+        document.getElementById('refundInfoPreview').style.display = 'block';
+        document.getElementById('refundInfoPreview').innerHTML = '<div class="result error">退款单不存在: ' + JSON.stringify(resp) + '</div>';
+    }
+}
+
+// 8. 退款审核
+async function reviewRefund(action) {
+    const data = { refund_no: document.getElementById('review_refund_no').value, action: action };
+    const handledBy = document.getElementById('refund_handled_by').value;
+    if (handledBy) data.handled_by = +handledBy;
+    const reason = document.getElementById('refund_reject_reason').value;
+    if (reason) data.rejected_reason = reason;
+    const resp = await callApi('payRefundReview', data);
+    showResult('refundReviewResult', resp, resp.code !== 200);
+    // 审核成功后刷新待审核列表
+    if (resp.code === 200) {
+        loadPendingRefunds();
+        document.getElementById('refundAuditForm').style.display = 'none';
+        document.getElementById('refundInfoPreview').style.display = 'none';
+    }
+}
+
+// 9. 订单操作流水
+const LOG_PAGE_SIZE = 20;
+let logCurrentPage = 1;
+let logAllData = [];
+let logMode = 'order'; // 'order' | 'all'
+
+async function queryOperationLog() {
+    const orderNo = document.getElementById('log_order_no').value;
+    logMode = 'order';
+    logCurrentPage = 1;
+    const resp = await callApi('payOperationLogList', { order_no: orderNo });
+    if (resp.code === 200 && resp.data && resp.data.list) {
+        logAllData = resp.data.list;
+        renderOperationLog();
+    } else {
+        showResult('operationLogResult', resp, true);
+    }
+}
+
+async function queryOperationLogAll() {
+    logMode = 'all';
+    logCurrentPage = 1;
+    const data = {};
+    const start = document.getElementById('log_start').value;
+    const end = document.getElementById('log_end').value;
+    if (start) data.start_time = start;
+    if (end) data.end_time = end;
+
+    const resp = await callApi('payOperationLogAll', data);
+    if (resp.code === 200 && resp.data && resp.data.list) {
+        logAllData = resp.data.list;
+        renderOperationLog();
+    } else {
+        showResult('operationLogResult', resp, true);
+    }
+}
+
+function renderOperationLog() {
+    const actionLabels = {
+        'create_order': '业务员提交订单',
+        'approve': '财务审核通过',
+        'reject': '财务审核拒绝',
+        'resubmit': '业务员修改重提',
+        'close': '关闭订单',
+        'delete': '业务员删除订单',
+        'refund_apply': '申请退款',
+        'refund_approve': '退款审核通过',
+        'refund_reject': '退款审核拒绝',
+        'refund_fail': '微信退款API失败'
+    };
+
+    // 后端已按 created_at DESC 返回（新→旧），前端直接分页展示
+    const total = logAllData.length;
+    const totalPages = Math.ceil(total / LOG_PAGE_SIZE);
+    const start = (logCurrentPage - 1) * LOG_PAGE_SIZE;
+    const pageData = logAllData.slice(start, start + LOG_PAGE_SIZE);
+
+    const showOrderCol = logMode === 'all';
+
+    let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr>';
+    if (showOrderCol) html += '<th>订单号</th>';
+    html += '<th>时间</th><th>操作人角色</th><th>操作人ID</th><th>操作类型</th><th>变更前状态</th><th>变更后状态</th><th>原因</th></tr>';
+    pageData.forEach(function(l) {
+        html += '<tr><td>' + (showOrderCol ? l.order_no + '</td>' : '');
+        html += '<td>' + l.created_at + '</td><td>' + l.operator_role + '</td><td>' + l.operator_id + '</td><td>' + (actionLabels[l.action_type] || l.action_type) + '</td><td>' + (l.from_status || '-') + '</td><td>' + (l.to_status || '-') + '</td><td>' + (l.reason || '-') + '</td></tr>';
+    });
+    html += '</table></div>';
+
+    // 翻页按钮
+    html += '<div style="margin-top:8px;display:flex;align-items:center;gap:8px;font-size:13px;">';
+    html += '<button class="btn btn-sm" onclick="logPrevPage()" ' + (logCurrentPage <= 1 ? 'disabled' : '') + '>上一页</button>';
+    html += '<span>第 ' + logCurrentPage + ' / ' + totalPages + ' 页（共 ' + total + ' 条）</span>';
+    html += '<button class="btn btn-sm" onclick="logNextPage()" ' + (logCurrentPage >= totalPages ? 'disabled' : '') + '>下一页</button>';
+    html += '</div>';
+
+    document.getElementById('operationLogResult').style.display = 'block';
+    document.getElementById('operationLogResult').innerHTML = html;
+}
+
+function logPrevPage() {
+    if (logCurrentPage > 1) {
+        logCurrentPage--;
+        renderOperationLog();
+    }
+}
+
+function logNextPage() {
+    logCurrentPage++;
+    renderOperationLog();
+}
+
+// 11. 业务员：重新提交被拒订单
+async function resubmitOrder() {
+    const data = {
+        order_no: document.getElementById('resubmit_order_no').value,
+        operator_id: +document.getElementById('resubmit_operator_id').value
+    };
+    const v1 = document.getElementById('resubmit_external_no').value;
+    if (v1) data.external_payment_no = v1;
+    const v2 = document.getElementById('resubmit_amount').value;
+    if (v2) data.total_amount = +v2;
+    const v3 = document.getElementById('resubmit_slot_qty').value;
+    if (v3) data.slot_quantity = +v3;
+    const v4 = document.getElementById('resubmit_customer_id').value;
+    if (v4) data.customer_id = +v4;
+    const v5 = document.getElementById('resubmit_session_id').value;
+    if (v5) data.session_id = +v5;
+    const v6 = document.getElementById('resubmit_remark').value;
+    if (v6) data.remark = v6;
+    const proofUrl = document.getElementById('resubmit_proof_url').value;
+    if (proofUrl) data.payment_proof_url = proofUrl;
+    const resp = await callApi('payOrderResubmit', data);
+    // 数据库更新成功后才删旧图
+    if (resp.code === 200) {
+        var oldUrl = document.getElementById('resubmit_old_proof_url').value;
+        if (oldUrl && oldUrl !== proofUrl) {
+            await callApi('deleteImage', { url: oldUrl });
+            document.getElementById('resubmit_old_proof_url').value = '';
+        }
+    }
+    showResult('resubmitResult', resp, resp.code !== 200);
+}
+
+async function deleteOrder() {
+    const orderNo = document.getElementById('resubmit_order_no').value;
+    const resp = await callApi('payOrderDelete', {
+        order_no: orderNo,
+        operator_id: +document.getElementById('resubmit_operator_id').value
+    });
+    showResult('resubmitResult', resp, resp.code !== 200);
+}
+
+// 加载订单信息用于编辑
+async function loadOrderForEdit() {
+    const orderNo = document.getElementById('resubmit_order_no').value;
+    if (!orderNo) return;
+    const resp = await callApi('payOrderQuery', { order_no: orderNo });
+    if (resp.code !== 200 || !resp.data) {
+        document.getElementById('resubmitResult').style.display = 'block';
+        document.getElementById('resubmitResult').className = 'result error';
+        document.getElementById('resubmitResult').textContent = '订单不存在: ' + JSON.stringify(resp);
+        return;
+    }
+    const d = resp.data;
+    // 显示订单信息
+    const infoEl = document.getElementById('resubmitOrderInfo');
+    infoEl.style.display = 'block';
+    infoEl.textContent = '状态: ' + d.status + ' | 核销: ' + d.verification_status + ' | 金额: ' + d.total_amount + '分 | 来源: ' + d.source + ' | 备注: ' + (d.remark || '-');
+    // 填充现有字段到表单
+    if (d.external_payment_no) document.getElementById('resubmit_external_no').value = d.external_payment_no;
+    if (d.remark) document.getElementById('resubmit_remark').value = d.remark;
+    // 记录旧的凭证 URL
+    if (d.payment_proof_url) {
+        document.getElementById('resubmit_old_proof_url').value = d.payment_proof_url;
+        document.getElementById('resubmitProofPreview').style.display = 'block';
+        document.getElementById('resubmitProofPreview').innerHTML = '<div style="color:#666; font-size:13px;">当前凭证：</div>' +
+            '<img src="' + d.payment_proof_url + '" style="max-width:200px; margin-top:8px; border-radius:6px;">';
+    }
+    // 填入金额/客户等（仅被拒绝订单可修改）
+    document.getElementById('resubmit_amount').value = d.total_amount;
+    document.getElementById('resubmit_customer_id').value = d.customer_id;
+    document.getElementById('resubmit_session_id').value = d.session_id;
+    document.getElementById('resubmit_slot_qty').value = d.slot_quantity;
+}
+
+// 修改表单的图片上传：先删旧图再传新图
+document.addEventListener('DOMContentLoaded', function() {
+    var resubmitFileInput = document.getElementById('resubmit_proof_file');
+    if (resubmitFileInput) {
+        resubmitFileInput.addEventListener('change', async function(e) {
+            var file = e.target.files[0];
+            if (!file) return;
+
+            var progressEl = document.getElementById('resubmitProofProgress');
+            var previewEl = document.getElementById('resubmitProofPreview');
+            progressEl.style.display = 'block';
+            progressEl.style.color = '#666';
+            progressEl.textContent = '正在上传...';
+            previewEl.style.display = 'none';
+
+            // 1. 获取预签名上传 URL
+            var signResp = await callApi('uploadSignUrl', {
+                fileName: file.name,
+                contentType: file.type || 'image/jpeg',
+                uniqueId: Date.now()
+            });
+            if (signResp.code !== 200 || !signResp.data) {
+                progressEl.textContent = '获取上传 URL 失败: ' + JSON.stringify(signResp);
+                progressEl.style.color = '#e63946';
+                return;
+            }
+            var uploadUrl = signResp.data.uploadUrl;
+            var publicUrl = signResp.data.publicUrl;
+
+            // 2. PUT 上传图片到 OSS（先不删旧图，等数据库更新成功后再删）
+            try {
+                var putResp = await fetch(uploadUrl, {
+                    method: 'PUT',
+                    body: file,
+                    headers: { 'Content-Type': file.type || 'image/jpeg' }
+                });
+                if (putResp.status >= 200 && putResp.status < 300) {
+                    document.getElementById('resubmit_proof_url').value = publicUrl;
+                    progressEl.style.display = 'none';
+                    previewEl.style.display = 'block';
+                    previewEl.innerHTML = '<div style="color:#2d6a4f;">上传成功</div>' +
+                        '<div style="font-size:12px; color:#666; margin-top:4px; word-break:break-all;">' + publicUrl + '</div>' +
+                        '<img src="' + publicUrl + '" style="max-width:200px; margin-top:8px; border-radius:6px;">';
+                } else {
+                    progressEl.textContent = '上传失败: HTTP ' + putResp.status;
+                    progressEl.style.color = '#e63946';
+                }
+            } catch (err) {
+                progressEl.textContent = '上传异常: ' + err.message;
+                progressEl.style.color = '#e63946';
+            }
+        });
+    }
+});
+</script>
+</body>
+</html>
