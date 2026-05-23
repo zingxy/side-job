@@ -14,8 +14,9 @@
 ### 2.1 账号与用户
 
 1. `staff_accounts`：后台工作人员账号（管理员/运营/业务/财务/讲师）
-2. `customers`：C 端学员用户
-3. `customer_profiles`：学员上课资料（抖音号、收入区间、学习目标等）
+2. `staff_accounts`：后台工作人员账号（管理员/运营/业务/财务/讲师）
+3. `customers`：C 端学员用户
+4. `customer_profiles`：学员上课资料（抖音号、收入区间、学习目标等）
 
 ### 2.1.1 课程分类
 
