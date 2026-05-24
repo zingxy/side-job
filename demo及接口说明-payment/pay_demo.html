@@ -65,12 +65,20 @@
             <input type="number" id="pay_customer_id" value="1">
         </div>
         <div class="form-group">
-            <label>课期 ID</label>
-            <input type="number" id="pay_session_id" value="1">
+            <label>课程 ID（必填）</label>
+            <input type="number" id="pay_course_id" value="1">
+        </div>
+        <div class="form-group">
+            <label>课期 ID（可选，不传就是纯充值）</label>
+            <input type="number" id="pay_session_id" value="">
+        </div>
+        <div class="form-group">
+            <label>名额数量</label>
+            <input type="number" id="pay_slot_quantity" value="3">
         </div>
         <div class="form-group">
             <label>金额（分）</label>
-            <input type="number" id="pay_amount" value="9900">
+            <input type="number" id="pay_amount" value="29700">
         </div>
         <div class="form-group">
             <label>商品描述</label>
@@ -82,18 +90,23 @@
 
     <!-- 2. 线下订单创建 -->
     <div class="section">
-        <h2>2. 线下订单创建（业务员）</h2>
+        <h2>2. 线下订单创建（业务员代录充值订单）</h2>
+        <p style="font-size:13px;color:#666;margin-bottom:12px;">业务员代录，客户对指定课程预存名额。订单进入待审核，财务核销后自动累加客户课程账户。</p>
         <div class="form-group">
             <label>客户 ID</label>
             <input type="number" id="offline_customer_id" value="1">
         </div>
         <div class="form-group">
-            <label>课期 ID</label>
-            <input type="number" id="offline_session_id" value="1">
+            <label>课程 ID（必填）</label>
+            <input type="number" id="offline_course_id" value="1">
+        </div>
+        <div class="form-group">
+            <label>名额数量</label>
+            <input type="number" id="offline_slot_qty" value="5">
         </div>
         <div class="form-group">
             <label>金额（分）</label>
-            <input type="number" id="offline_amount" value="9900">
+            <input type="number" id="offline_amount" value="50000">
         </div>
         <div class="form-group">
             <label>线下付款单号</label>
@@ -112,9 +125,9 @@
         </div>
         <div class="form-group">
             <label>备注（选填，供财务审核参考）</label>
-            <input type="text" id="offline_remark" placeholder="如：客户已转账9900元/凭证后补">
+            <input type="text" id="offline_remark" placeholder="如：客户已转账50000元/凭证后补">
         </div>
-        <button class="btn btn-primary" onclick="createOffline()">创建线下订单</button>
+        <button class="btn btn-primary" onclick="createOffline()">创建充值订单</button>
         <div id="offlineResult" class="result" style="display:none"></div>
     </div>
 
@@ -216,6 +229,10 @@
         <div class="form-group">
             <label>退款金额（分）</label>
             <input type="number" id="refund_amount" value="9900">
+        </div>
+        <div class="form-group">
+            <label>退款名额数</label>
+            <input type="number" id="refund_slot_quantity" value="1" min="1">
         </div>
         <div class="form-group">
             <label>退款原因</label>
@@ -358,6 +375,86 @@
         </div>
         <div id="resubmitResult" class="result" style="display:none"></div>
     </div>
+
+    <!-- 12. 课程账户管理 -->
+    <div class="section">
+        <h2>12. 课程账户管理</h2>
+
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid #e5e7eb;">
+            <div style="flex:1;">
+                <h3 style="font-size:15px;margin-bottom:8px;">查询学员课程账户</h3>
+                <div style="display:flex;gap:8px;">
+                    <input type="number" id="ca_customer_id" value="1" style="width:120px;padding:6px 10px;border:1px solid #ddd;border-radius:6px;" placeholder="学员ID">
+                    <input type="number" id="ca_course_id" style="width:120px;padding:6px 10px;border:1px solid #ddd;border-radius:6px;" placeholder="课程ID（可选）">
+                    <button class="btn btn-primary" onclick="queryCourseAccounts()">查询账户</button>
+                </div>
+            </div>
+        </div>
+        <div id="caListResult" style="display:none"></div>
+
+        <div style="margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;">
+            <h3 style="font-size:15px;margin-bottom:8px;">查询账户流水</h3>
+            <p style="font-size:13px;color:#666;margin-bottom:8px;">支持两种查询：① 填学员ID+可选课程ID，查某学员的流水；② 仅填课程ID，查该课程所有学员的流水（哪些学员报过名）。</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+                <input type="number" id="caTx_customer_id" style="width:120px;padding:6px 10px;border:1px solid #ddd;border-radius:6px;" placeholder="学员ID（可选）">
+                <input type="number" id="caTx_course_id" style="width:120px;padding:6px 10px;border:1px solid #ddd;border-radius:6px;" placeholder="课程ID（可选）">
+                <button class="btn btn-primary" onclick="queryAccountTransactions()">查询流水</button>
+            </div>
+            <div id="caTxResult" style="display:none;margin-top:8px;"></div>
+        </div>
+    </div>
+
+
+    <!-- 13. 课程账户报名（自己报名 / 帮朋友报名） -->
+    <div class="section">
+        <h2>13. 报名（自己报名 / 帮朋友报名）</h2>
+        <p style="font-size:13px;color:#666;margin-bottom:12px;">用自有名额报名（from=to 就是自己报名），扣减名额并在流水中记录。每次扣1个名额，给多人报名需分别调用。</p>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+            <div class="form-group" style="flex:1;min-width:100px;">
+                <label>转出方学员 ID（A）</label>
+                <input type="number" id="transfer_from_id" value="1" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
+            </div>
+            <div class="form-group" style="flex:1;min-width:100px;">
+                <label>转入方学员 ID（B）</label>
+                <input type="number" id="transfer_to_id" value="2" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
+            </div>
+            <div class="form-group" style="flex:1;min-width:100px;">
+                <label>课程 ID</label>
+                <input type="number" id="transfer_course_id" value="1" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
+            </div>
+            <div class="form-group" style="flex:1;min-width:100px;">
+                <label>课期 ID（可选）</label>
+                <input type="number" id="transfer_session_id" value="" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;" placeholder="记录到流水">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>备注</label>
+            <input type="text" id="transfer_remark" placeholder="如：A给B报名第4期">
+        </div>
+        <button class="btn btn-success" onclick="courseAccountTransfer()">帮朋友报名（A扣名额）</button>
+        <div id="transferResult" class="result" style="display:none"></div>
+
+        <!-- 批量转赠：A同时给B、C多人报名 -->
+        <div style="margin-top:16px;padding-top:12px;border-top:1px solid #e5e7eb;">
+            <h3 style="font-size:15px;margin-bottom:8px;">批量帮多人报名（A同时给B、C、D报名）</h3>
+            <p style="font-size:13px;color:#666;margin-bottom:8px;">每行一个被报名方学员ID，用逗号分隔。</p>
+            <div class="form-group">
+                <label>扣减方学员 ID（A）</label>
+                <input type="number" id="batch_transfer_from_id" value="1" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;width:200px;">
+            </div>
+            <div class="form-group">
+                <label>被报名方学员 ID 列表（B,C,D...）</label>
+                <input type="text" id="batch_transfer_to_ids" value="2,3" placeholder="如：2,3,4" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;width:300px;">
+            </div>
+            <div class="form-group">
+                <label>课程 ID</label>
+                <input type="number" id="batch_transfer_course_id" value="1" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;width:200px;">
+            </div>
+            <button class="btn btn-warning" onclick="batchCourseAccountTransfer()">批量帮人报名</button>
+            <div id="batchTransferResult" class="result" style="display:none"></div>
+        </div>
+    </div>
 </div>
 
 <!-- 图片预览模态框 -->
@@ -436,10 +533,15 @@ async function callApi(action, data) {
 async function payCreate() {
     const data = {
         customer_id: +document.getElementById('pay_customer_id').value,
-        session_id: +document.getElementById('pay_session_id').value,
+        course_id: +document.getElementById('pay_course_id').value,
         amount: +document.getElementById('pay_amount').value,
         body: document.getElementById('pay_body').value
     };
+    const slotQty = +document.getElementById('pay_slot_quantity').value;
+    if (slotQty > 1) data.slot_quantity = slotQty;
+    // session_id 可选，不传就是纯充值
+    const sessionId = document.getElementById('pay_session_id').value;
+    if (sessionId) data.session_id = +sessionId;
     const resp = await callApi('payCreate', data);
     showResult('payCreateResult', resp, resp.code !== 200);
     if (resp.data && resp.data.order_no) {
@@ -450,14 +552,18 @@ async function payCreate() {
     }
 }
 
-// 2. 线下订单
+// 2. 线下充值订单
 async function createOffline() {
     const data = {
         customer_id: +document.getElementById('offline_customer_id').value,
-        session_id: +document.getElementById('offline_session_id').value,
+        course_id: +document.getElementById('offline_course_id').value,
         amount: +document.getElementById('offline_amount').value,
-        created_by_staff_id: +document.getElementById('offline_staff_id').value
+        created_by_staff_id: +document.getElementById('offline_staff_id').value,
+        type: "recharge"
     };
+    const slotQty = document.getElementById('offline_slot_qty').value;
+    if (slotQty) data.slot_quantity = +slotQty;
+
     const v1 = document.getElementById('offline_payment_no').value;
     if (v1) data.external_payment_no = v1;
     const v2 = document.getElementById('offline_proof_url').value;
@@ -532,7 +638,10 @@ async function queryOrder() {
         let html = '<div class="table-wrapper"><table class="detail-table">';
         html += '<tr><td>订单号</td><td>' + d.order_no + '</td></tr>';
         html += '<tr><td>支付流水号</td><td>' + (d.payment_no || '-') + '</td></tr>';
+        html += '<tr><td>类型</td><td>' + (d.type === 'recharge' ? '课程充值' : '购买课程') + '</td></tr>';
         html += '<tr><td>课期ID</td><td>' + (d.session_id || '-') + '</td></tr>';
+        html += '<tr><td>课程ID</td><td>' + (d.course_id || '-') + '</td></tr>';
+        html += '<tr><td>课程账户ID</td><td>' + (d.course_account_id || '-') + '</td></tr>';
         var payTag = tagFor(d.status);
         var verifyTag = tagFor(d.status, d.verification_status);
         if (d.has_pending_refund) {
@@ -568,7 +677,7 @@ async function queryOrder() {
 async function queryOrderList() {
     const resp = await callApi('payOrderList', { customer_id: +document.getElementById('query_customer_id').value });
     if (resp.code === 200 && resp.data && resp.data.list) {
-        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>订单号</th><th>支付流水号</th><th>类型</th><th>课期ID</th><th>来源</th><th>金额</th><th>退款金额</th><th>支付状态</th><th>核销状态</th><th>业务员ID</th><th>审核员ID</th><th>备注</th><th>拒绝原因</th><th>支付时间</th><th>审核时间</th><th>创建时间</th><th>退款明细</th></tr>';
+        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>订单号</th><th>支付流水号</th><th>类型</th><th>课期ID</th><th>课程ID</th><th>课程账户</th><th>来源</th><th>金额</th><th>退款金额</th><th>支付状态</th><th>核销状态</th><th>业务员ID</th><th>审核员ID</th><th>备注</th><th>拒绝原因</th><th>支付时间</th><th>审核时间</th><th>创建时间</th><th>退款明细</th></tr>';
         resp.data.list.forEach(function(o) {
             var payTag = tagFor(o.status);
             var verifyTag = tagFor(o.status, o.verification_status);
@@ -580,7 +689,8 @@ async function queryOrderList() {
             if (o.refunds && o.refunds.length > 0) {
                 refundDetail = '<button class="btn btn-sm" style="padding:2px 8px;font-size:12px;" onclick="showRefundDetail(this, ' + JSON.stringify(o.refunds).replace(/"/g, '&quot;') + ')">查看(' + o.refunds.length + '笔)</button>';
             }
-            html += '<tr><td>' + o.order_no + '</td><td>' + (o.payment_no || '-') + '</td><td>' + o.type + '</td><td>' + (o.session_id || '-') + '</td><td>' + o.source + '</td><td>' + o.total_amount + '分</td><td>' + (o.refund_amount ? o.refund_amount + '分' : '-') + '</td><td>' + payTag + '</td><td>' + verifyTag + '</td><td>' + (o.created_by_staff_id || '-') + '</td><td>' + (o.verified_by || '-') + '</td><td>' + (o.remark || '-') + '</td><td>' + (o.rejected_reason || '-') + '</td><td>' + (o.paid_at || '-') + '</td><td>' + (o.reviewed_at || '-') + '</td><td>' + o.created_at + '</td><td>' + refundDetail + '</td></tr>';
+            var typeLabel = o.type === 'recharge' ? '充值' : '购买';
+            html += '<tr><td>' + o.order_no + '</td><td>' + (o.payment_no || '-') + '</td><td>' + typeLabel + '</td><td>' + (o.session_id || '-') + '</td><td>' + (o.course_id || '-') + '</td><td>' + (o.course_account_id || '-') + '</td><td>' + o.source + '</td><td>' + o.total_amount + '分</td><td>' + (o.refund_amount ? o.refund_amount + '分' : '-') + '</td><td>' + payTag + '</td><td>' + verifyTag + '</td><td>' + (o.created_by_staff_id || '-') + '</td><td>' + (o.verified_by || '-') + '</td><td>' + (o.remark || '-') + '</td><td>' + (o.rejected_reason || '-') + '</td><td>' + (o.paid_at || '-') + '</td><td>' + (o.reviewed_at || '-') + '</td><td>' + o.created_at + '</td><td>' + refundDetail + '</td></tr>';
         });
         html += '</table></div>';
         document.getElementById('queryListResult').style.display = 'block';
@@ -606,9 +716,9 @@ function showRefundDetail(btn, refunds) {
     const sourceLabels = { customer: '客户申请', staff: '工作人员发起' };
     const typeLabels = { full: '全额', partial: '部分' };
 
-    let html = '<table class="refund-detail-table" style="margin-top:6px;margin-bottom:10px;background:#f8f9fa;border-radius:6px;"><tr><th>退款单号</th><th>状态</th><th>渠道</th><th>来源</th><th>类型</th><th>金额(分)</th><th>原因</th><th>创建时间</th></tr>';
+    let html = '<table class="refund-detail-table" style="margin-top:6px;margin-bottom:10px;background:#f8f9fa;border-radius:6px;"><tr><th>退款单号</th><th>状态</th><th>渠道</th><th>来源</th><th>类型</th><th>金额(分)</th><th>退款名额</th><th>原因</th><th>创建时间</th></tr>';
     refunds.forEach(function(r) {
-        html += '<tr><td>' + r.refund_no + '</td><td>' + (statusLabels[r.status] || r.status) + '</td><td>' + (channelLabels[r.channel] || r.channel) + '</td><td>' + (sourceLabels[r.source] || r.source) + '</td><td>' + (typeLabels[r.type] || r.type) + '</td><td>' + r.amount + '</td><td>' + (r.reason || '-') + '</td><td>' + r.created_at + '</td></tr>';
+        html += '<tr><td>' + r.refund_no + '</td><td>' + (statusLabels[r.status] || r.status) + '</td><td>' + (channelLabels[r.channel] || r.channel) + '</td><td>' + (sourceLabels[r.source] || r.source) + '</td><td>' + (typeLabels[r.type] || r.type) + '</td><td>' + r.amount + '</td><td>' + (r.refund_slot_quantity || '-') + '</td><td>' + (r.reason || '-') + '</td><td>' + r.created_at + '</td></tr>';
     });
     html += '</table>';
 
@@ -626,7 +736,7 @@ async function queryAllOrders() {
 
     const resp = await callApi('payOrderAllList', data);
     if (resp.code === 200 && resp.data && resp.data.list) {
-        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>订单号</th><th>支付流水号</th><th>付款凭证</th><th>类型</th><th>课期ID</th><th>来源</th><th>金额</th><th>退款金额</th><th>支付状态</th><th>核销状态</th><th>业务员ID</th><th>审核员ID</th><th>备注</th><th>拒绝原因</th><th>支付时间</th><th>审核时间</th><th>创建时间</th><th>退款明细</th></tr>';
+        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>订单号</th><th>支付流水号</th><th>付款凭证</th><th>类型</th><th>课期ID</th><th>课程ID</th><th>课程账户</th><th>来源</th><th>金额</th><th>退款金额</th><th>支付状态</th><th>核销状态</th><th>业务员ID</th><th>审核员ID</th><th>备注</th><th>拒绝原因</th><th>支付时间</th><th>审核时间</th><th>创建时间</th><th>退款明细</th></tr>';
         resp.data.list.forEach(function(o) {
             var payTag = tagFor(o.status);
             var verifyTag = tagFor(o.status, o.verification_status);
@@ -638,7 +748,7 @@ async function queryAllOrders() {
             if (o.refunds && o.refunds.length > 0) {
                 refundDetail = '<button class="btn btn-sm" style="padding:2px 8px;font-size:12px;" onclick="showRefundDetail(this, ' + JSON.stringify(o.refunds).replace(/"/g, '&quot;') + ')">查看(' + o.refunds.length + '笔)</button>';
             }
-            html += '<tr><td>' + o.order_no + '</td><td>' + (o.payment_no || '-') + '</td><td>' + (o.payment_proof_url ? '<a href="javascript:void(0)" onclick="previewImage(\'' + o.payment_proof_url + '\')">查看图片</a>' : '-') + '</td><td>' + o.type + '</td><td>' + (o.session_id || '-') + '</td><td>' + o.source + '</td><td>' + o.total_amount + '分</td><td>' + (o.refund_amount ? o.refund_amount + '分' : '-') + '</td><td>' + payTag + '</td><td>' + verifyTag + '</td><td>' + (o.created_by_staff_id || '-') + '</td><td>' + (o.verified_by || '-') + '</td><td>' + (o.remark || '-') + '</td><td>' + (o.rejected_reason || '-') + '</td><td>' + (o.paid_at || '-') + '</td><td>' + (o.reviewed_at || '-') + '</td><td>' + o.created_at + '</td><td>' + refundDetail + '</td></tr>';
+            html += '<tr><td>' + o.order_no + '</td><td>' + (o.payment_no || '-') + '</td><td>' + (o.payment_proof_url ? '<a href="javascript:void(0)" onclick="previewImage(\'' + o.payment_proof_url + '\')">查看图片</a>' : '-') + '</td><td>' + o.type + '</td><td>' + (o.session_id || '-') + '</td><td>' + (o.course_id || '-') + '</td><td>' + (o.course_account_id || '-') + '</td><td>' + o.source + '</td><td>' + o.total_amount + '分</td><td>' + (o.refund_amount ? o.refund_amount + '分' : '-') + '</td><td>' + payTag + '</td><td>' + verifyTag + '</td><td>' + (o.created_by_staff_id || '-') + '</td><td>' + (o.verified_by || '-') + '</td><td>' + (o.remark || '-') + '</td><td>' + (o.rejected_reason || '-') + '</td><td>' + (o.paid_at || '-') + '</td><td>' + (o.reviewed_at || '-') + '</td><td>' + o.created_at + '</td><td>' + refundDetail + '</td></tr>';
         });
         html += '</table></div>';
         document.getElementById('allOrderListResult').style.display = 'block';
@@ -701,9 +811,9 @@ function renderRefundList(list) {
     };
     const sourceLabels = { customer: '客户申请', staff: '工作人员发起' };
     const typeLabels = { full: '全额', partial: '部分' };
-    let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>退款单号</th><th>订单号</th><th>状态</th><th>渠道</th><th>来源</th><th>类型</th><th>金额(分)</th><th>申请人</th><th>原因</th><th>处理时间</th><th>创建时间</th></tr>';
+    let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>退款单号</th><th>订单号</th><th>状态</th><th>渠道</th><th>来源</th><th>类型</th><th>金额(分)</th><th>退款名额</th><th>申请人</th><th>原因</th><th>处理时间</th><th>创建时间</th></tr>';
     list.forEach(function(r) {
-        html += '<tr><td>' + r.refund_no + '</td><td>' + (r.order_no || '-') + '</td><td>' + (statusLabels[r.status] || r.status) + '</td><td>' + (channelLabels[r.channel] || r.channel) + '</td><td>' + (sourceLabels[r.source] || r.source) + '</td><td>' + (typeLabels[r.type] || r.type) + '</td><td>' + r.amount + '</td><td>' + r.applicant_customer_id + '</td><td>' + (r.reason || '-') + '</td><td>' + (r.handled_at || '-') + '</td><td>' + r.created_at + '</td></tr>';
+        html += '<tr><td>' + r.refund_no + '</td><td>' + (r.order_no || '-') + '</td><td>' + (statusLabels[r.status] || r.status) + '</td><td>' + (channelLabels[r.channel] || r.channel) + '</td><td>' + (sourceLabels[r.source] || r.source) + '</td><td>' + (typeLabels[r.type] || r.type) + '</td><td>' + r.amount + '</td><td>' + (r.refund_slot_quantity || '-') + '</td><td>' + r.applicant_customer_id + '</td><td>' + (r.reason || '-') + '</td><td>' + (r.handled_at || '-') + '</td><td>' + r.created_at + '</td></tr>';
     });
     html += '</table></div>';
     document.getElementById('refundListResult').style.display = 'block';
@@ -756,6 +866,7 @@ async function applyRefund() {
         order_no: orderNo,
         applicant_customer_id: +document.getElementById('refund_applicant_id').value,
         amount: +document.getElementById('refund_amount').value,
+        refund_slot_quantity: +document.getElementById('refund_slot_quantity').value,
         source: document.getElementById('refund_source').value
     };
     const reason = document.getElementById('refund_reason').value;
@@ -986,6 +1097,111 @@ async function deleteOrder() {
         operator_id: +document.getElementById('resubmit_operator_id').value
     });
     showResult('resubmitResult', resp, resp.code !== 200);
+}
+
+// ========================
+// 课程账户相关 JavaScript
+// ========================
+
+// 查询学员课程账户
+async function queryCourseAccounts() {
+    const data = { customer_id: +document.getElementById('ca_customer_id').value };
+    const courseId = document.getElementById('ca_course_id').value;
+    if (courseId) data.course_id = +courseId;
+
+    const resp = await callApi('payCourseAccountList', data);
+    if (resp.code === 200 && resp.data && resp.data.list) {
+        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>账户ID</th><th>课程ID</th><th>累计充值</th><th>已消耗</th><th>已退款</th><th>累计名额</th><th>已消耗名额</th><th>已退款名额</th><th>可用名额</th><th>更新时间</th></tr>';
+        resp.data.list.forEach(function(a) {
+            html += '<tr><td>' + a.id + '</td><td>' + a.course_id + '</td><td>' + a.total_recharge_amount + '分</td><td>' + a.consumed_amount + '分</td><td>' + a.refunded_amount + '分</td><td>' + a.total_slots + '</td><td>' + a.consumed_slots + '</td><td>' + a.refunded_slots + '</td><td><strong>' + a.available_slots + '</strong></td><td>' + a.updated_at + '</td></tr>';
+        });
+        html += '</table></div>';
+        document.getElementById('caListResult').style.display = 'block';
+        document.getElementById('caListResult').innerHTML = html;
+    } else {
+        document.getElementById('caListResult').style.display = 'block';
+        document.getElementById('caListResult').innerHTML = '<div class="result error">查询失败: ' + JSON.stringify(resp) + '</div>';
+    }
+}
+
+// 查询账户流水
+async function queryAccountTransactions() {
+    const customerId = document.getElementById('caTx_customer_id').value;
+    const courseId = document.getElementById('caTx_course_id').value;
+    if (!customerId && !courseId) {
+        document.getElementById('caTxResult').style.display = 'block';
+        document.getElementById('caTxResult').innerHTML = '<div class="result error">请至少填写学员ID或课程ID</div>';
+        return;
+    }
+    const data = {};
+    if (customerId) data.customer_id = +customerId;
+    if (courseId) data.course_id = +courseId;
+
+    const resp = await callApi('payCourseAccountTransactions', data);
+    if (resp.code === 200 && resp.data && resp.data.list) {
+        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>流水ID</th><th>学员ID</th><th>课程ID</th><th>课期ID</th><th>被报名人ID</th><th>变动类型</th><th>名额变动</th><th>金额变动</th><th>关联订单</th><th>关联退款</th><th>备注</th><th>时间</th></tr>';
+        resp.data.list.forEach(function(t) {
+            html += '<tr><td>' + t.id + '</td><td>' + t.customer_id + '</td><td>' + t.course_id + '</td><td>' + (t.session_id || '-') + '</td><td>' + (t.to_customer_id && t.to_customer_id > 0 ? t.to_customer_id : '-') + '</td><td>' + (t.type_label || t.type) + '</td><td>' + (t.slots_change > 0 ? '+' : '') + t.slots_change + '</td><td>' + (t.amount_change > 0 ? '+' : '') + t.amount_change + '分</td><td>' + (t.ref_order_id || '-') + '</td><td>' + (t.ref_refund_id || '-') + '</td><td>' + (t.remark || '-') + '</td><td>' + t.created_at + '</td></tr>';
+        });
+        html += '</table></div>';
+        document.getElementById('caTxResult').style.display = 'block';
+        document.getElementById('caTxResult').innerHTML = html;
+    } else {
+        document.getElementById('caTxResult').style.display = 'block';
+        document.getElementById('caTxResult').innerHTML = '<div class="result error">查询失败: ' + JSON.stringify(resp) + '</div>';
+    }
+}
+
+// 课程账户转赠（A给B报名）
+async function courseAccountTransfer() {
+    const data = {
+        from_customer_id: +document.getElementById('transfer_from_id').value,
+        to_customer_id: +document.getElementById('transfer_to_id').value,
+        course_id: +document.getElementById('transfer_course_id').value
+    };
+    const sessionId = document.getElementById('transfer_session_id').value;
+    if (sessionId) data.session_id = +sessionId;
+    const remark = document.getElementById('transfer_remark').value;
+    if (remark) data.remark = remark;
+
+    const resp = await callApi('payCourseAccountTransfer', data);
+    showResult('transferResult', resp, resp.code !== 200);
+}
+
+// 批量转赠（A同时给多人报名）
+async function batchCourseAccountTransfer() {
+    const fromId = +document.getElementById('batch_transfer_from_id').value;
+    const toIdsStr = document.getElementById('batch_transfer_to_ids').value;
+    const courseId = +document.getElementById('batch_transfer_course_id').value;
+
+    if (!toIdsStr) {
+        showResult('batchTransferResult', { code: 400, msg: '转入方学员ID不能为空' }, true);
+        return;
+    }
+
+    const toIds = toIdsStr.split(',').map(function(s) { return +s.trim(); }).filter(function(n) { return n > 0; });
+    if (toIds.length === 0) {
+        showResult('batchTransferResult', { code: 400, msg: '无效的转入方学员ID' }, true);
+        return;
+    }
+
+    const sessionId = document.getElementById('transfer_session_id').value;
+    let results = [];
+    for (let i = 0; i < toIds.length; i++) {
+        const data = {
+            from_customer_id: fromId,
+            to_customer_id: toIds[i],
+            course_id: courseId,
+            transfer_slots: 1,
+            remark: '批量转赠给学员' + toIds[i]
+        };
+        if (sessionId) data.session_id = +sessionId;
+        const resp = await callApi('payCourseAccountTransfer', data);
+        results.push({ to_customer_id: toIds[i], code: resp.code, msg: resp.msg });
+        if (resp.code !== 200) break; // 失败则停止
+    }
+
+    showResult('batchTransferResult', { code: 200, msg: '批量转赠完成', data: results }, false);
 }
 
 // 加载订单信息用于编辑

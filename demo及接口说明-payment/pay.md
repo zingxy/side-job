@@ -33,18 +33,18 @@
 
 ### 1.1 payCreate — 小程序创建订单（统一下单）
 
-**使用场景：** 小程序端客户选好课期和名额后，点击"立即支付"触发此接口。
+**使用场景：** 小程序端客户选择课程后，点击"立即支付"触发此接口。支付层只关注课程充值，`course_id` 必填，`session_id` 可选（不传就是纯充值，传了表示希望报哪一期）。财务核销/支付成功后自动累加课程账户名额。
 
 **请求参数：**
 
 | 字段 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
 | customer_id | int | 是 | 下单客户 ID |
-| session_id | int | 是 | 课期 ID |
 | amount | int | 是 | 总金额（分） |
+| course_id | int | 是 | 课程 ID |
+| session_id | int | 否 | 课期 ID（不传 = 纯充值，传 = 希望报的课期） |
 | body | string | 否 | 商品描述，默认"课程订单" |
 | open_id | string | 否 | 用户微信 OpenID |
-| type | string | 否 | 订单类型，默认 `purchase` |
 | source | string | 否 | 订单来源，默认 `mini_program` |
 | slot_quantity | int | 否 | 名额数量，默认 1 |
 
@@ -70,11 +70,22 @@
 **示例：**
 
 ```json
-// 请求 POST /api/payCreate
+// 请求 POST /api/payCreate（纯充值，不指定课期）
 {
   "customer_id": 1,
+  "course_id": 10,
+  "slot_quantity": 5,
+  "amount": 50000,
+  "body": "课程充值"
+}
+
+// 请求 POST /api/payCreate（充值+指定课期）
+{
+  "customer_id": 1,
+  "course_id": 10,
   "session_id": 1,
-  "amount": 9900,
+  "slot_quantity": 3,
+  "amount": 29700,
   "body": "测试课程"
 }
 
@@ -146,7 +157,9 @@
 | id | int | 订单自增 ID |
 | order_no | string | 订单号 |
 | customer_id | int | 客户 ID |
-| session_id | int | 课期 ID |
+| session_id | int | 课期 ID（充值订单为 0） |
+| course_id | int | 课程 ID（充值订单必填，购买订单可选） |
+| course_account_id | int | 关联课程账户 ID（充值订单核销后写入） |
 | type | string | 订单类型：`purchase`（购买）/ `recharge`（充值） |
 | source | string | 订单来源：`mini_program`（小程序）/ `offline`（线下代录） |
 | slot_quantity | int | 名额数量 |
@@ -219,7 +232,7 @@
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
-| list | array | 订单数组，每项字段同 `payOrderQuery` 的 data，额外包含： |
+| list | array | 订单数组，每项字段同 `payOrderQuery` 的 data（含 `course_id`、`course_account_id`），额外包含： |
 | refunds | array | 该订单的退款明细数组（仅当有退款记录时返回，见下方退款明细字段） |
 | refund_amount | int | 已退总金额（分） |
 | refundable_amount | int | 可退余额（分） |
@@ -262,7 +275,7 @@
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
-| list | array | 订单数组，字段同 `payOrderQuery` 的 data，额外包含 `payment_no`、`refund_amount`、`refundable_amount`、`has_pending_refund`，以及 `refunds` 退款明细数组（仅当有退款记录时返回，字段同 `payOrderList` 的 `refunds`） |
+| list | array | 订单数组，字段同 `payOrderQuery` 的 data（含 `course_id`、`course_account_id`），额外包含 `payment_no`、`refund_amount`、`refundable_amount`、`has_pending_refund`，以及 `refunds` 退款明细数组（仅当有退款记录时返回，字段同 `payOrderList` 的 `refunds`） |
 
 ---
 
@@ -270,17 +283,17 @@
 
 ### 3.1 payOrderCreateOffline — 创建线下订单
 
-**使用场景：** 业务员在线下收到客户转账/现金后，在后台代录订单。订单创建后状态为 `paid`，`verification_status=pending_review`，等待财务审核。
+**使用场景：** 业务员在线下收到客户转账/现金后，在后台代录充值订单。客户对指定课程预存名额，订单进入待审核，财务核销通过后自动累加 `customer_course_accounts` 课程账户名额。`course_id` 必填，`session_id` 可选。
 
 **请求参数：**
 
 | 字段 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
 | customer_id | int | 是 | 客户 ID |
-| session_id | int | 是 | 课期 ID |
+| course_id | int | 是 | 课程 ID |
+| session_id | int | 否 | 课期 ID（不传 = 纯充值） |
 | amount | int | 是 | 总金额（分） |
 | slot_quantity | int | 否 | 名额数量，默认 1 |
-| type | string | 否 | 订单类型，默认 `purchase` |
 | external_payment_no | string | 否 | 线下支付单号（转账流水号等） |
 | payment_proof_url | string | 否 | 付款凭证图片 URL |
 | created_by_staff_id | int | 否 | 业务员 ID |
@@ -299,6 +312,10 @@
 ### 3.2 payOrderReview — 财务审核线下订单
 
 **使用场景：** 财务人员登录后台，查看业务员提交的线下订单，核对转账凭证后决定通过或拒绝。只有 `verification_status=pending_review` 的订单可审核。
+
+**审核通过时：**
+- 所有订单：`verification_status → manual_verified`
+- **有 course_id 的订单**：自动累加 `customer_course_accounts` 课程账户（ON DUPLICATE KEY UPDATE），写入 `course_account_transactions` 流水（type=recharge），回写 `course_account_id` 到订单
 
 **请求参数：**
 
@@ -335,6 +352,7 @@
 | total_amount | int | 否 | 修改后的金额（仅被拒绝订单可修改） |
 | slot_quantity | int | 否 | 修改后的名额数量（仅被拒绝订单可修改） |
 | customer_id | int | 否 | 修改后的客户 ID（仅被拒绝订单可修改） |
+| course_id | int | 否 | 修改后的课程 ID（仅被拒绝订单可修改） |
 | remark | string | 否 | 修改后的备注 |
 
 **注意：** 待审核订单（`pending_review`）不可修改金额/客户等核心字段，只允许修改备注、凭证、课期。
@@ -405,6 +423,7 @@
 | order_no | string | 是 | 订单号 |
 | applicant_customer_id | int | 是 | 申请人客户 ID（退款归属） |
 | amount | int | 是 | 退款金额（分） |
+| refund_slot_quantity | int | 是 | 退款名额数量 |
 | reason | string | 否 | 退款原因 |
 | source | string | 否 | 退款来源：`customer`（客户申请）/ `staff`（工作人员），默认 `customer` |
 | operator_id | int | staff 时必填 | 操作人 ID，`source=staff` 时必填，`source=customer` 时可省略 |
@@ -529,6 +548,7 @@
 | channel | string | 退款渠道：`wechat_original_route`（微信原路退回）/ `offline_manual`（线下人工退款） |
 | status | string | 退款状态（见下方枚举） |
 | amount | int | 退款金额（分） |
+| refund_slot_quantity | int | 退款名额数量 |
 | reason | string | 退款原因 |
 | rejected_reason | string | 拒绝原因 |
 | handled_by | int | 审核人 ID |
@@ -569,6 +589,7 @@
 | channel | string | 退款渠道 |
 | status | string | 退款状态 |
 | amount | int | 退款金额（分） |
+| refund_slot_quantity | int | 退款名额数量 |
 | reason | string | 退款原因 |
 | rejected_reason | string | 拒绝原因 |
 | handled_by | int | 审核人 ID |
@@ -602,6 +623,7 @@
 | type | string | 退款类型：`full` / `partial` |
 | channel | string | 退款渠道 |
 | amount | int | 退款金额（分） |
+| refund_slot_quantity | int | 退款名额数量 |
 | reason | string | 退款原因 |
 | created_at | string | 申请时间 |
 
@@ -706,6 +728,211 @@
 ```
 
 Go 服务不可达时返回 `502`。
+
+---
+
+## 八、课程账户管理
+
+充值订单财务核销通过后，自动累加学员的课程账户名额。以下为课程账户相关接口。
+
+### 8.1 payCourseAccountList — 查询学员课程账户列表
+
+**使用场景：** 前端报名页展示学员在某课程下的可用账户，确认有多少名额可用于报名。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 学员 ID |
+| course_id | int | 否 | 课程 ID（传则只返回该课程账户，不传返回全部） |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 课程账户数组，每项包含： |
+
+**账户记录字段（list[].）：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| id | int | 课程账户 ID |
+| customer_id | int | 学员 ID |
+| course_id | int | 课程 ID |
+| total_recharge_amount | decimal | 累计充值金额 |
+| consumed_amount | decimal | 已消耗金额 |
+| refunded_amount | decimal | 已退款金额 |
+| total_slots | int | 累计充值获得名额数 |
+| consumed_slots | int | 已消耗名额数 |
+| refunded_slots | int | 已退款名额数 |
+| available_slots | int | 可用名额（计算值 = total_slots - consumed_slots - refunded_slots） |
+| created_at | string | 创建时间 |
+| updated_at | string | 更新时间 |
+
+---
+
+### 8.2 payCourseAccountTransactions — 查询课程账户流水
+
+**使用场景：**
+1. 传 `customer_id`（+ 可选 `course_id`）：查某学员的账户变动明细
+2. 仅传 `course_id`：查该课程下所有学员的流水（**哪些学员报过名**）
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 否 | 学员 ID（与 course_id 至少填一个） |
+| course_id | int | 否 | 课程 ID（单独传 = 查该课程全部学员流水） |
+| start_time | string | 否 | 起始时间 |
+| end_time | string | 否 | 结束时间 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 流水记录数组（按 created_at 倒序） |
+
+**流水记录字段（list[].）：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| id | int | 流水 ID |
+| customer_id | int | 学员 ID（按课程查询时可用于区分不同学员） |
+| course_id | int | 课程 ID |
+| type | string | 变动类型（见下表） |
+| type_label | string | 变动类型中文：充值 / 报名消耗 / 退款扣除 / 转赠报名（帮朋友报名） / 转赠报名（获赠名额） |
+| session_id | int | 课期ID（非课期场景为 0） |
+| to_customer_id | int | 被报名人ID（帮朋友报名时记录对方学员ID，0 表示非转赠场景） |
+| slots_change | int | 名额变动（正数=增加，负数=减少） |
+| amount_change | decimal | 金额变动（正数=增加，负数=减少） |
+| ref_order_id | int | 关联订单 ID（充值/报名时） |
+| ref_refund_id | int | 关联退款单 ID（退款扣除时） |
+| remark | string | 备注 |
+| created_at | string | 变动时间 |
+
+**变动类型：**
+
+| type 值 | type_label | 说明 |
+| :--- | :--- | :--- |
+| recharge | 充值 | 充值订单核销后累加 |
+| enroll_consume | 报名消耗 | 学员报名课期时消耗 |
+| refund_deduct | 退款扣除 | 退款审核通过后扣除 |
+| transfer_out | 帮朋友报名 | A用自有名额帮B报名，A扣名额，备注记录B的ID |
+
+---
+
+### 8.3 payCourseAccountDeduct — 扣减课程账户名额
+
+**使用场景：** 学员自己报名某个具体课期时调用，扣减对应课程账户的可用名额。
+
+**扣减策略：** 消耗 `consumed_slots`（名额不可退款）。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 扣减方学员 ID |
+| course_id | int | 是 | 课程 ID |
+| deduct_slots | int | 是 | 扣减名额数量 |
+| deduct_amount | decimal | 是 | 扣减金额（分，由调用方传入，后端不做单价校验） |
+| ref_order_id | int | 否 | 关联报名订单 ID |
+| remark | string | 否 | 备注 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| success | bool | 是否扣减成功 |
+| remaining_slots | int | 扣减后可用名额 |
+
+**错误码：** `400` — 账户不存在 / 可用名额不足 / 参数校验失败
+
+**并发安全**：使用 `WHERE` 条件做乐观锁，`affected_rows = 0` 表示名额不足。
+
+---
+
+### 8.4 payCourseAccountAdd — 增加课程账户名额
+
+**使用场景：** 单独为某学员增加课程账户名额（不增加金额）。充值场景不使用此接口，充值由核销后处理自动累加。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 增加方学员 ID |
+| course_id | int | 是 | 课程 ID |
+| add_slots | int | 是 | 增加名额数量 |
+| remark | string | 否 | 备注 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| success | bool | 是否增加成功 |
+| course_account_id | int | 账户 ID |
+
+---
+
+### 8.5 payCourseAccountTransfer — 帮朋友报名（A给B/C报名）
+
+**使用场景：** A用自有名额帮朋友B报名。A消耗自有名额（`consumed_slots+N`），B的报名信息记录在其他系统（不在支付系统课程账户中）。一次调用扣减A名额并写A的流水，备注中记录帮谁报名。给多人报名时循环调用，每次处理一个。
+
+默认每次帮报名1个名额。具体报哪一期由前端在课期选择页面决定，后端只负责扣减名额并记录帮谁报名。
+
+**示例**：A用课程X的自有名额给B报名。
+
+```json
+{
+  "from_customer_id": 1,
+  "to_customer_id": 2,
+  "course_id": 10,
+  "remark": "A给B报名第4期"
+}
+```
+
+给C报名再调一次，`to_customer_id` 改为 C 的 ID。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| from_customer_id | int | 是 | 扣减方学员 ID（A） |
+| to_customer_id | int | 是 | 被报名学员 ID（B） |
+| course_id | int | 是 | 课程 ID |
+| transfer_slots | int | 否 | 报名名额数量，默认 1 |
+| remark | string | 否 | 备注 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| success | bool | 是否报名成功 |
+| remaining_slots | int | 扣减方剩余可用名额 |
+
+**并发安全**：使用 `WHERE` 条件乐观锁，`affected_rows = 0` 回滚事务。
+
+**操作内容**：
+1. A的 `consumed_slots + N`（消耗自有名额）
+2. 写A的流水：`type=transfer_out`，`type_label=帮朋友报名`，`slots_change=-N`，备注记录B的ID
+
+---
+
+### 8.6 payCourseAccountRefundDeduct — 退款扣除课程账户名额（内部调用）
+
+**使用场景：** 退款审核通过后，退款模块内部调用此接口扣除学员的课程账户名额和金额。前端不直接调用。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 学员 ID |
+| course_id | int | 是 | 课程 ID |
+| deduct_slots | int | 是 | 扣除名额数量 |
+| deduct_amount | decimal | 是 | 扣除金额（分） |
+| ref_refund_id | int | 是 | 关联退款单 ID |
+| remark | string | 否 | 备注 |
+
+**注意**：退款扣除的名额**不恢复** available_slots。钱已退，名额彻底扣除。
 
 ---
 
