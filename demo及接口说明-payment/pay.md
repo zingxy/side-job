@@ -9,6 +9,36 @@
 
 **前端开发者只需要知道**：所有接口都是 `POST /api/{action}`，调 C++ 的 8080 端口。Go 服务不对外暴露接口。
 
+## HTTP 调用协议
+
+- **协议**：HTTP（开发环境）/ HTTPS（生产环境）
+- **域名与端口**：`http://{server}:8080`（C++ 服务端口，生产环境由 Nginx 反代到 443）
+- **请求方法**：全部 `POST`
+- **请求路径**：`/api/{action}`，如 `/api/payCreate`、`/api/payOrderQuery`
+- **Content-Type**：`application/json`
+- **请求体**：JSON 对象，字段见各接口说明
+- **响应体**：统一 JSON 格式 `{ "code": 200, "msg": "success", "data": {...} }`
+- **认证**：当前接口无鉴权，前端通过传入 `customer_id`/`operator_id` 等标识区分操作人（生产环境应加 JWT 或 Session 鉴权）
+
+**调用示例（curl）：**
+
+```bash
+curl -X POST http://localhost:8080/api/payCreate \
+  -H "Content-Type: application/json" \
+  -d '{"customer_id":1,"course_id":10,"slot_quantity":1,"amount":9900}'
+```
+
+**调用示例（JavaScript fetch）：**
+
+```js
+const res = await fetch('http://localhost:8080/api/payCreate', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ customer_id: 1, course_id: 10, slot_quantity: 1, amount: 9900 }),
+});
+const data = await res.json();
+```
+
 ## 通用约定
 
 - **请求方式**：所有接口均为 `POST`
@@ -33,7 +63,7 @@
 
 ### 1.1 payCreate — 小程序创建订单（统一下单）
 
-**使用场景：** 小程序端客户选择课程后，点击"立即支付"触发此接口。支付层只关注课程充值，`course_id` 必填，`session_id` 可选（不传就是纯充值，传了表示希望报哪一期）。财务核销/支付成功后自动累加课程账户名额。
+**使用场景：** 小程序端客户选择课程后，点击"立即支付"触发此接口。支付层只关注课程充值，`course_id` 必填。财务核销/支付成功后自动累加课程账户名额。
 
 **请求参数：**
 
@@ -42,7 +72,6 @@
 | customer_id | int | 是 | 下单客户 ID |
 | amount | int | 是 | 总金额（分） |
 | course_id | int | 是 | 课程 ID |
-| session_id | int | 否 | 课期 ID（不传 = 纯充值，传 = 希望报的课期） |
 | body | string | 否 | 商品描述，默认"课程订单" |
 | open_id | string | 否 | 用户微信 OpenID |
 | source | string | 否 | 订单来源，默认 `mini_program` |
@@ -70,7 +99,7 @@
 **示例：**
 
 ```json
-// 请求 POST /api/payCreate（纯充值，不指定课期）
+// 请求 POST /api/payCreate
 {
   "customer_id": 1,
   "course_id": 10,
@@ -79,13 +108,12 @@
   "body": "课程充值"
 }
 
-// 请求 POST /api/payCreate（充值+指定课期）
+// 请求 POST /api/payCreate（单名额）
 {
   "customer_id": 1,
   "course_id": 10,
-  "session_id": 1,
-  "slot_quantity": 3,
-  "amount": 29700,
+  "slot_quantity": 1,
+  "amount": 9900,
   "body": "测试课程"
 }
 
@@ -157,8 +185,7 @@
 | id | int | 订单自增 ID |
 | order_no | string | 订单号 |
 | customer_id | int | 客户 ID |
-| session_id | int | 课期 ID（充值订单为 0） |
-| course_id | int | 课程 ID（充值订单必填，购买订单可选） |
+| course_id | int | 课程 ID |
 | course_account_id | int | 关联课程账户 ID（充值订单核销后写入） |
 | type | string | 订单类型：`purchase`（购买）/ `recharge`（充值） |
 | source | string | 订单来源：`mini_program`（小程序）/ `offline`（线下代录） |
@@ -199,7 +226,6 @@
     "id": 1,
     "order_no": "ORD20260519123456123456",
     "customer_id": 1,
-    "session_id": 1,
     "type": "purchase",
     "source": "mini_program",
     "total_amount": 9900,
@@ -283,7 +309,7 @@
 
 ### 3.1 payOrderCreateOffline — 创建线下订单
 
-**使用场景：** 业务员在线下收到客户转账/现金后，在后台代录充值订单。客户对指定课程预存名额，订单进入待审核，财务核销通过后自动累加 `customer_course_accounts` 课程账户名额。`course_id` 必填，`session_id` 可选。
+**使用场景：** 业务员在线下收到客户转账/现金后，在后台代录充值订单。客户对指定课程预存名额，订单进入待审核，财务核销通过后自动累加 `customer_course_accounts` 课程账户名额。`course_id` 必填。
 
 **请求参数：**
 
@@ -291,7 +317,6 @@
 | :--- | :--- | :--- | :--- |
 | customer_id | int | 是 | 客户 ID |
 | course_id | int | 是 | 课程 ID |
-| session_id | int | 否 | 课期 ID（不传 = 纯充值） |
 | amount | int | 是 | 总金额（分） |
 | slot_quantity | int | 否 | 名额数量，默认 1 |
 | external_payment_no | string | 否 | 线下支付单号（转账流水号等） |
@@ -348,14 +373,13 @@
 | operator_id | int | 是 | 操作人 ID（当前登录业务员 ID） |
 | external_payment_no | string | 否 | 修改后的线下支付单号 |
 | payment_proof_url | string | 否 | 修改后的付款凭证 URL |
-| session_id | int | 否 | 修改后的课期 ID |
 | total_amount | int | 否 | 修改后的金额（仅被拒绝订单可修改） |
 | slot_quantity | int | 否 | 修改后的名额数量（仅被拒绝订单可修改） |
 | customer_id | int | 否 | 修改后的客户 ID（仅被拒绝订单可修改） |
 | course_id | int | 否 | 修改后的课程 ID（仅被拒绝订单可修改） |
 | remark | string | 否 | 修改后的备注 |
 
-**注意：** 待审核订单（`pending_review`）不可修改金额/客户等核心字段，只允许修改备注、凭证、课期。
+**注意：** 待审核订单（`pending_review`）不可修改金额/客户等核心字段，只允许修改备注、凭证。
 
 **响应 data：**
 
@@ -368,7 +392,7 @@
 
 ### 3.4 payOrderClose — 关闭订单
 
-**使用场景：** 手动关闭超期未支付的订单，释放课期名额。仅 `pending_payment` 状态的订单可关闭。
+**使用场景：** 手动关闭超期未支付的订单。仅 `pending_payment` 状态的订单可关闭。
 
 **请求参数：**
 
@@ -457,20 +481,22 @@
 **示例：**
 
 ```json
-// 请求 POST /api/payRefund（客户申请）
+// 请求 POST /api/payRefund（客户申请，退 1 个名额）
 {
   "order_no": "ORD20260519123456123456",
   "applicant_customer_id": 1,
   "amount": 9900,
+  "refund_slot_quantity": 1,
   "reason": "个人原因申请退款",
   "source": "customer"
 }
 
-// 请求 POST /api/payRefund（工作人员代申请）
+// 请求 POST /api/payRefund（工作人员代申请，退多个名额）
 {
   "order_no": "ORD20260519123456123456",
   "applicant_customer_id": 1,
-  "amount": 9900,
+  "amount": 29700,
+  "refund_slot_quantity": 3,
   "reason": "客户要求退款",
   "source": "staff",
   "operator_id": 1
@@ -801,7 +827,6 @@ Go 服务不可达时返回 `502`。
 | course_id | int | 课程 ID |
 | type | string | 变动类型（见下表） |
 | type_label | string | 变动类型中文：充值 / 报名消耗 / 退款扣除 / 转赠报名（帮朋友报名） / 转赠报名（获赠名额） |
-| session_id | int | 课期ID（非课期场景为 0） |
 | to_customer_id | int | 被报名人ID（帮朋友报名时记录对方学员ID，0 表示非转赠场景） |
 | slots_change | int | 名额变动（正数=增加，负数=减少） |
 | amount_change | decimal | 金额变动（正数=增加，负数=减少） |
@@ -815,7 +840,7 @@ Go 服务不可达时返回 `502`。
 | type 值 | type_label | 说明 |
 | :--- | :--- | :--- |
 | recharge | 充值 | 充值订单核销后累加 |
-| enroll_consume | 报名消耗 | 学员报名课期时消耗 |
+| enroll_consume | 报名消耗 | 学员报名时消耗名额 |
 | refund_deduct | 退款扣除 | 退款审核通过后扣除 |
 | transfer_out | 帮朋友报名 | A用自有名额帮B报名，A扣名额，备注记录B的ID |
 
@@ -823,7 +848,7 @@ Go 服务不可达时返回 `502`。
 
 ### 8.3 payCourseAccountDeduct — 扣减课程账户名额
 
-**使用场景：** 学员自己报名某个具体课期时调用，扣减对应课程账户的可用名额。
+**使用场景：** 学员自己报名时调用，扣减对应课程账户的可用名额。
 
 **扣减策略：** 消耗 `consumed_slots`（名额不可退款）。
 
@@ -877,7 +902,7 @@ Go 服务不可达时返回 `502`。
 
 **使用场景：** A用自有名额帮朋友B报名。A消耗自有名额（`consumed_slots+N`），B的报名信息记录在其他系统（不在支付系统课程账户中）。一次调用扣减A名额并写A的流水，备注中记录帮谁报名。给多人报名时循环调用，每次处理一个。
 
-默认每次帮报名1个名额。具体报哪一期由前端在课期选择页面决定，后端只负责扣减名额并记录帮谁报名。
+默认每次帮报名1个名额。具体报哪个活动/场次由前端决定，后端只负责扣减名额并记录帮谁报名。
 
 **示例**：A用课程X的自有名额给B报名。
 
