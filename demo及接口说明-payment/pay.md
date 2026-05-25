@@ -336,7 +336,12 @@ const data = await res.json();
 
 ### 3.2 payOrderReview — 财务审核线下订单
 
-**使用场景：** 财务人员登录后台，查看业务员提交的线下订单，核对转账凭证后决定通过或拒绝。只有 `verification_status=pending_review` 的订单可审核。
+**使用场景：** 财务人员登录后台，查看业务员提交的线下订单，核对转账凭证后决定通过或拒绝。
+
+**校验规则：**
+1. 订单已软删除（`deleted_at` 不为空）→ 拒绝
+2. 仅线下订单（`source=offline`）且已支付（`status=paid`）可审核
+3. 仅 `verification_status=pending_review` 的订单可审核（已审核/已拒绝的不可重复审核）
 
 **审核通过时：**
 - 所有订单：`verification_status → manual_verified`
@@ -392,7 +397,11 @@ const data = await res.json();
 
 ### 3.4 payOrderClose — 关闭订单
 
-**使用场景：** 手动关闭超期未支付的订单。仅 `pending_payment` 状态的订单可关闭。
+**使用场景：** 手动关闭超期未支付的订单。
+
+**校验规则：**
+1. 订单已软删除（`deleted_at` 不为空）→ 拒绝
+2. 仅 `pending_payment` 状态的订单可关闭
 
 **请求参数：**
 
