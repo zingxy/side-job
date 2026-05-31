@@ -455,6 +455,56 @@
             <div id="batchTransferResult" class="result" style="display:none"></div>
         </div>
     </div>
+
+    <!-- 14. 名额转赠（A转给B，A扣名额 + B加名额） -->
+    <div class="section">
+        <h2>14. 名额转赠（A转给B持有）</h2>
+        <p style="font-size:13px;color:#666;margin-bottom:12px;">转赠后 A 的可用名额减少，B 的可用名额增加。B 可以用转赠来的名额报名课期。不支持链式转赠（B 收到后不能再转给别人）。</p>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+            <div class="form-group" style="flex:1;min-width:100px;">
+                <label>转出方学员 ID（A）</label>
+                <input type="number" id="gift_from_id" value="1" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
+            </div>
+            <div class="form-group" style="flex:1;min-width:100px;">
+                <label>接收方学员 ID（B）</label>
+                <input type="number" id="gift_to_id" value="2" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
+            </div>
+            <div class="form-group" style="flex:1;min-width:100px;">
+                <label>课程 ID</label>
+                <input type="number" id="gift_course_id" value="1" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
+            </div>
+            <div class="form-group" style="flex:1;min-width:100px;">
+                <label>转赠名额数</label>
+                <input type="number" id="gift_slots" value="1" min="1" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
+            </div>
+        </div>
+        <div class="form-group">
+            <label>备注</label>
+            <input type="text" id="gift_remark" placeholder="如：转赠给朋友">
+        </div>
+        <button class="btn btn-warning" onclick="courseAccountGift()">名额转赠</button>
+        <div id="giftResult" class="result" style="display:none"></div>
+    </div>
+
+    <!-- 15. 我的名额（聚合查询：合并购买 + 转赠） -->
+    <div class="section">
+        <h2>15. 我的名额（聚合展示）</h2>
+        <p style="font-size:13px;color:#666;margin-bottom:12px;">查看某学员在所有课程中的名额详情，区分购买和转赠来源。</p>
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+            <div class="form-group" style="flex:1;min-width:120px;">
+                <label>学员 ID</label>
+                <input type="number" id="myslots_customer_id" value="1" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
+            </div>
+            <div class="form-group" style="flex:1;min-width:120px;">
+                <label>课程 ID（可选，不传返回所有课程）</label>
+                <input type="number" id="myslots_course_id" value="" placeholder="不传=全部" style="padding:6px 10px;border:1px solid #ddd;border-radius:6px;">
+            </div>
+            <button class="btn btn-primary" onclick="queryMySlots()">查询</button>
+        </div>
+        <div id="mySlotsResult" style="display:none"></div>
+    </div>
 </div>
 
 <!-- 图片预览模态框 -->
@@ -1139,9 +1189,18 @@ async function queryAccountTransactions() {
 
     const resp = await callApi('payCourseAccountTransactions', data);
     if (resp.code === 200 && resp.data && resp.data.list) {
-        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>流水ID</th><th>学员ID</th><th>课程ID</th><th>课期ID</th><th>被报名人ID</th><th>变动类型</th><th>名额变动</th><th>金额变动</th><th>关联订单</th><th>关联退款</th><th>备注</th><th>时间</th></tr>';
+        let html = '<div style="overflow-x:auto;max-width:100%;"><table><tr><th>流水ID</th><th>学员ID</th><th>课程ID</th><th>课期ID</th><th>关联学员</th><th>变动类型</th><th>名额变动</th><th>金额变动</th><th>关联订单</th><th>关联退款</th><th>备注</th><th>时间</th></tr>';
         resp.data.list.forEach(function(t) {
-            html += '<tr><td>' + t.id + '</td><td>' + t.customer_id + '</td><td>' + t.course_id + '</td><td>' + (t.session_id || '-') + '</td><td>' + (t.to_customer_id && t.to_customer_id > 0 ? t.to_customer_id : '-') + '</td><td>' + (t.type_label || t.type) + '</td><td>' + (t.slots_change > 0 ? '+' : '') + t.slots_change + '</td><td>' + (t.amount_change > 0 ? '+' : '') + t.amount_change + '分</td><td>' + (t.ref_order_id || '-') + '</td><td>' + (t.ref_refund_id || '-') + '</td><td>' + (t.remark || '-') + '</td><td>' + t.created_at + '</td></tr>';
+            var relatedLabel = '';
+            if (t.to_customer_id && t.to_customer_id > 0) {
+                if (t.type === 'gift_in') relatedLabel = '来自 ' + t.to_customer_id;
+                else if (t.type === 'gift_out') relatedLabel = '转给 ' + t.to_customer_id;
+                else if (t.type === 'transfer_out') relatedLabel = '替 ' + t.to_customer_id + ' 报名';
+                else relatedLabel = t.to_customer_id;
+            } else {
+                relatedLabel = '-';
+            }
+            html += '<tr><td>' + t.id + '</td><td>' + t.customer_id + '</td><td>' + t.course_id + '</td><td>' + (t.session_id || '-') + '</td><td>' + relatedLabel + '</td><td>' + (t.type_label || t.type) + '</td><td>' + (t.slots_change > 0 ? '+' : '') + t.slots_change + '</td><td>' + (t.amount_change > 0 ? '+' : '') + t.amount_change + '分</td><td>' + (t.ref_order_id || '-') + '</td><td>' + (t.ref_refund_id || '-') + '</td><td>' + (t.remark || '-') + '</td><td>' + t.created_at + '</td></tr>';
         });
         html += '</table></div>';
         document.getElementById('caTxResult').style.display = 'block';
@@ -1291,6 +1350,66 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+// ========================
+// 新增：名额转赠 & 我的名额
+// ========================
+
+// 名额转赠（A 扣名额 + B 加名额，所有权转移）
+async function courseAccountGift() {
+    const data = {
+        from_customer_id: +document.getElementById('gift_from_id').value,
+        to_customer_id: +document.getElementById('gift_to_id').value,
+        course_id: +document.getElementById('gift_course_id').value,
+        gift_slots: +document.getElementById('gift_slots').value
+    };
+    const remark = document.getElementById('gift_remark').value;
+    if (remark) data.remark = remark;
+
+    const resp = await callApi('payCourseAccountGift', data);
+    showResult('giftResult', resp, resp.code !== 200);
+}
+
+// 我的名额（聚合查询）
+async function queryMySlots() {
+    const data = { customer_id: +document.getElementById('myslots_customer_id').value };
+    const courseId = document.getElementById('myslots_course_id').value;
+    if (courseId) data.course_id = +courseId;
+
+    const resp = await callApi('payMySlots', data);
+    if (resp.code === 200 && resp.data && resp.data.accounts) {
+        let html = '';
+        resp.data.accounts.forEach(function(a) {
+            html += '<div class="section" style="margin-bottom:8px;">';
+            html += '<h3 style="font-size:15px;margin-bottom:8px;">课程 ID: ' + a.course_id + ' — 可用名额: <strong style="color:#2d6a4f;">' + a.available_slots + '</strong></h3>';
+            html += '<p style="font-size:13px;color:#666;margin-bottom:8px;">总 ' + a.total_slots + ' | 已用 ' + a.consumed_slots + ' | 已退 ' + a.refunded_slots + ' | 可用 ' + a.available_slots + '</p>';
+
+            if (a.items && a.items.length > 0) {
+                html += '<table><tr><th>来源</th><th>名额</th><th>详情</th><th>时间</th></tr>';
+                a.items.forEach(function(item) {
+                    var label, detail;
+                    if (item.source === 'purchase') {
+                        label = '<span class="tag tag-paid">已购买</span>';
+                        detail = '订单 ' + (item.order_no || '-') + ' ¥' + (item.total_amount ? (item.total_amount / 100).toFixed(2) : '-') + '元';
+                    } else {
+                        label = '<span class="tag" style="background:#ede9fe;color:#6d28d9;">转赠</span>';
+                        detail = '来自 用户' + item.from_customer_id;
+                    }
+                    html += '<tr><td>' + label + '</td><td>' + item.slots + '</td><td>' + detail + '</td><td>' + item.created_at + '</td></tr>';
+                });
+                html += '</table>';
+            } else {
+                html += '<p style="font-size:13px;color:#999;">暂无名额来源明细</p>';
+            }
+            html += '</div>';
+        });
+        document.getElementById('mySlotsResult').style.display = 'block';
+        document.getElementById('mySlotsResult').innerHTML = html;
+    } else {
+        document.getElementById('mySlotsResult').style.display = 'block';
+        document.getElementById('mySlotsResult').innerHTML = '<div class="result error">查询失败: ' + JSON.stringify(resp) + '</div>';
+    }
+}
 </script>
 </body>
 </html>

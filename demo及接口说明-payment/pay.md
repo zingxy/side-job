@@ -836,7 +836,7 @@ Go 服务不可达时返回 `502`。
 | course_id | int | 课程 ID |
 | type | string | 变动类型（见下表） |
 | type_label | string | 变动类型中文：充值 / 报名消耗 / 退款扣除 / 转赠报名（帮朋友报名） / 转赠报名（获赠名额） |
-| to_customer_id | int | 被报名人ID（帮朋友报名时记录对方学员ID，0 表示非转赠场景） |
+| to_customer_id | int | 关联学员ID（不同流水类型含义不同：`transfer_out`=被报名人ID，`gift_out`=接收方ID，`gift_in`=赠与人ID） |
 | slots_change | int | 名额变动（正数=增加，负数=减少） |
 | amount_change | decimal | 金额变动（正数=增加，负数=减少） |
 | ref_order_id | int | 关联订单 ID（充值/报名时） |
@@ -852,6 +852,8 @@ Go 服务不可达时返回 `502`。
 | enroll_consume | 报名消耗 | 学员报名时消耗名额 |
 | refund_deduct | 退款扣除 | 退款审核通过后扣除 |
 | transfer_out | 帮朋友报名 | A用自有名额帮B报名，A扣名额，备注记录B的ID |
+| gift_out | 转赠转出 | A转赠名额给B，A扣名额+B加名额，所有权转移 |
+| gift_in | 转赠收入 | B收到A转赠的名额，B可用名额增加 |
 
 ---
 
@@ -905,6 +907,8 @@ Go 服务不可达时返回 `502`。
 | success | bool | 是否增加成功 |
 | course_account_id | int | 账户 ID |
 
+**错误码：** `400` — 参数校验失败；`500` — 数据库写入失败
+
 ---
 
 ### 8.5 payCourseAccountTransfer — 帮朋友报名（A给B/C报名）
@@ -943,6 +947,8 @@ Go 服务不可达时返回 `502`。
 | success | bool | 是否报名成功 |
 | remaining_slots | int | 扣减方剩余可用名额 |
 
+**错误码：** `400` — 账户不存在 / 可用名额不足 / 帮报名数量为 0
+
 **并发安全**：使用 `WHERE` 条件乐观锁，`affected_rows = 0` 回滚事务。
 
 **操作内容**：
@@ -951,7 +957,138 @@ Go 服务不可达时返回 `502`。
 
 ---
 
-### 8.6 payCourseAccountRefundDeduct — 退款扣除课程账户名额（内部调用）
+### 8.6 payCourseAccountGift — 名额转赠（A转给B持有）
+
+**使用场景：** A将自己拥有的课程名额转赠给B。转赠后 A 的可用名额减少，B 的可用名额增加（名额所有权转移）。B 可以用转赠来的名额报名课期。不支持链式转赠（B 收到后不能再转给别人），由表单服务器控制。
+
+一次调用完成 A 扣减 + B 增加，数据库事务保证原子性。A/B 必须不同人，转赠数量必须大于 0。
+
+**示例**：A 转赠 2 个课程 X 的名额给 B。
+
+```json
+{
+  "from_customer_id": 1,
+  "to_customer_id": 2,
+  "course_id": 10,
+  "gift_slots": 2,
+  "remark": "转赠给朋友"
+}
+```
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| from_customer_id | int | 是 | 转出方学员 ID（A） |
+| to_customer_id | int | 是 | 接收方学员 ID（B） |
+| course_id | int | 是 | 课程 ID |
+| gift_slots | int | 是 | 转赠名额数量 |
+| remark | string | 否 | 备注 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| success | bool | 是否转赠成功 |
+| from_remaining_slots | int | 转出方剩余可用名额 |
+
+**错误码：** `400` — 账户不存在 / 可用名额不足 / 转赠给自己 / 转赠数量为 0
+
+**并发安全**：事务包裹扣减 A + 增加 B + 写两条流水，A 扣减使用乐观锁 `WHERE (total_slots - consumed_slots - refunded_slots) >= gift_slots`。
+
+**操作内容**：
+1. A 的 `consumed_slots + N`（扣减转出方名额）
+2. B 的 `total_slots + N`（增加接收方名额，首次转赠自动创建账户）
+3. 写 A 的流水：`type=gift_out`，`slots_change=-N`，`to_customer_id=B`
+4. 写 B 的流水：`type=gift_in`，`slots_change=+N`，`to_customer_id=A`
+
+---
+
+### 8.7 payMySlots — 我的名额（聚合查询）
+
+**使用场景：** 前端展示"我的名额"页面，一次性返回学员在所有课程中的名额总数和来源明细，区分购买和转赠来源。
+
+**与 `payCourseAccountList` 的区别：** 本接口额外返回 `items` 数组，包含每笔名额的来源明细（购买订单号/金额、转赠来源人），前端只需调一次即可完整展示。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 学员 ID |
+| course_id | int | 否 | 课程 ID（不传返回所有课程） |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| accounts | array | 课程账户数组，每项包含： |
+
+**账户记录字段（accounts[].）：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| course_id | int | 课程 ID |
+| total_slots | int | 累计名额 |
+| consumed_slots | int | 已消耗名额 |
+| refunded_slots | int | 已退款名额 |
+| available_slots | int | 可用名额 |
+| items | array | 名额来源明细数组（见下表） |
+
+**名额来源明细字段（accounts[].items[]）：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| source | string | 来源类型：`purchase`（购买）/ `gift`（转赠） |
+| slots | int | 该笔来源的名额数量 |
+| order_no | string | 订单号（仅 `purchase` 时有值） |
+| total_amount | int | 订单总金额（分）（仅 `purchase` 时有值） |
+| ref_order_id | int | 订单自增 ID（仅 `purchase` 时有值） |
+| from_customer_id | int | 赠与人 ID（仅 `gift` 时有值） |
+| created_at | string | 获取时间 |
+
+**示例：**
+
+```json
+// 请求 POST /api/payMySlots
+{ "customer_id": 1 }
+
+// 响应
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "accounts": [
+      {
+        "course_id": 1,
+        "total_slots": 5,
+        "consumed_slots": 1,
+        "refunded_slots": 0,
+        "available_slots": 4,
+        "items": [
+          {
+            "source": "purchase",
+            "slots": 3,
+            "order_no": "ORD20260531195458455736",
+            "total_amount": 29700,
+            "ref_order_id": 1,
+            "created_at": "2026-05-31 19:54:58"
+          },
+          {
+            "source": "gift",
+            "slots": 2,
+            "from_customer_id": 4002,
+            "created_at": "2026-05-31 20:00:00"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+---
+
+### 8.8 payCourseAccountRefundDeduct — 退款扣除课程账户名额（内部调用）
 
 **使用场景：** 退款审核通过后，退款模块内部调用此接口扣除学员的课程账户名额和金额。前端不直接调用。
 
