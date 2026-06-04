@@ -706,30 +706,30 @@ const data = await res.json();
 
 **请求参数：**
 
-| 字段 | 类型 | 必填 | 说明 |
-| :--- | :--- | :--- | :--- |
-| order_no | string | 是 | 订单号 |
+| 字段       | 类型     | 必填  | 说明  |
+| :------- | :----- | :-- | :-- |
+| order_no | string | 是   | 订单号 |
 
 **响应 data：**
 
-| 字段 | 类型 | 说明 |
-| :--- | :--- | :--- |
+| 字段   | 类型    | 说明     |
+| :--- | :---- | :----- |
 | list | array | 操作记录数组 |
 
 **操作记录字段：**
 
-| 字段 | 类型 | 说明 |
-| :--- | :--- | :--- |
-| id | int | 流水自增 ID |
-| order_no | string | 订单号 |
-| operator_id | int | 操作人 ID |
-| operator_role | string | 操作人角色：`sales`（业务员）/ `finance`（财务）/ `customer`（客户） |
-| action_type | string | 操作类型（见下方枚举） |
-| from_status | string | 变更前状态 |
-| to_status | string | 变更后状态 |
-| reason | string | 操作原因/拒绝原因 |
-| proof_snapshot | string | 凭证快照（JSON） |
-| created_at | string | 操作时间 |
+| 字段             | 类型     | 说明                                                |
+| :------------- | :----- | :------------------------------------------------ |
+| id             | int    | 流水自增 ID                                           |
+| order_no       | string | 订单号                                               |
+| operator_id    | int    | 操作人 ID                                            |
+| operator_role  | string | 操作人角色：`sales`（业务员）/ `finance`（财务）/ `customer`（客户） |
+| action_type    | string | 操作类型（见下方枚举）                                       |
+| from_status    | string | 变更前状态                                             |
+| to_status      | string | 变更后状态                                             |
+| reason         | string | 操作原因/拒绝原因                                         |
+| proof_snapshot | string | 凭证快照（JSON）                                        |
+| created_at     | string | 操作时间                                              |
 
 ---
 
@@ -824,35 +824,35 @@ Go 服务不可达时返回 `502`。
 
 **请求参数：**
 
-| 字段 | 类型 | 必填 | 说明 |
-| :--- | :--- | :--- | :--- |
-| customer_id | int | 否 | 学员 ID（与 course_id 至少填一个） |
-| course_id | int | 否 | 课程 ID（单独传 = 查该课程全部学员流水） |
-| start_time | string | 否 | 起始时间 |
-| end_time | string | 否 | 结束时间 |
+| 字段          | 类型     | 必填  | 说明                       |
+| :---------- | :----- | :-- | :----------------------- |
+| customer_id | int    | 否   | 学员 ID（与 course_id 至少填一个） |
+| course_id   | int    | 否   | 课程 ID（单独传 = 查该课程全部学员流水）  |
+| start_time  | string | 否   | 起始时间                     |
+| end_time    | string | 否   | 结束时间                     |
 
 **响应 data：**
 
-| 字段 | 类型 | 说明 |
-| :--- | :--- | :--- |
+| 字段   | 类型    | 说明                      |
+| :--- | :---- | :---------------------- |
 | list | array | 流水记录数组（按 created_at 倒序） |
 
 **流水记录字段（list[].）：**
 
-| 字段 | 类型 | 说明 |
-| :--- | :--- | :--- |
-| id | int | 流水 ID |
-| customer_id | int | 学员 ID（按课程查询时可用于区分不同学员） |
-| course_id | int | 课程 ID |
-| type | string | 变动类型（见下表） |
-| type_label | string | 变动类型中文：充值 / 报名消耗 / 退款扣除 / 帮朋友报名 / 转赠转出 / 转赠收入 |
-| to_customer_id | int | 关联学员ID（不同流水类型含义不同：`transfer_out`=被报名人ID，`gift_out`=接收方ID，`gift_in`=赠与人ID） |
-| slots_change | int | 名额变动（正数=增加，负数=减少） |
-| amount_change | decimal | 金额变动（正数=增加，负数=减少） |
-| ref_order_id | int | 关联订单 ID（充值/报名时） |
-| ref_refund_id | int | 关联退款单 ID（退款扣除时） |
-| remark | string | 备注 |
-| created_at | string | 变动时间 |
+| 字段             | 类型      | 说明                                                                        |
+| :------------- | :------ | :------------------------------------------------------------------------ |
+| id             | int     | 流水 ID                                                                     |
+| customer_id    | int     | 学员 ID（按课程查询时可用于区分不同学员）                                                    |
+| course_id      | int     | 课程 ID                                                                     |
+| type           | string  | 变动类型（见下表）                                                                 |
+| type_label     | string  | 变动类型中文：充值 / 报名消耗 / 退款扣除 / 转赠报名（帮朋友报名） / 转赠报名（获赠名额）                        |
+| to_customer_id | int     | 关联学员ID（不同流水类型含义不同：`transfer_out`=被报名人ID，`gift_out`=接收方ID，`gift_in`=赠与人ID） |
+| slots_change   | int     | 名额变动（正数=增加，负数=减少）                                                         |
+| amount_change  | decimal | 金额变动（正数=增加，负数=减少）                                                         |
+| ref_order_id   | int     | 关联订单 ID（充值/报名时）                                                           |
+| ref_refund_id  | int     | 关联退款单 ID（退款扣除时）                                                           |
+| remark         | string  | 备注                                                                        |
+| created_at     | string  | 变动时间                                                                      |
 
 **变动类型：**
 
