@@ -76,6 +76,10 @@ const data = await res.json();
 | open_id | string | 否 | 用户微信 OpenID |
 | source | string | 否 | 订单来源，默认 `mini_program` |
 | slot_quantity | int | 否 | 名额数量，默认 1 |
+| recharge_type | string | 否 | 充值类型，后端自动判断：有历史充值记录 → `additional_recharge`，否则 → `recharge` |
+| payment_method | string | 否 | 充值方式，后端自动设为 `wechat` |
+
+**注意：** `recharge_type` 和 `payment_method` 由后端自动填充，前端无需传入。小程序端仅区分 `recharge`（充值）和 `additional_recharge`（追加充值）。
 
 **响应 data：**
 
@@ -207,6 +211,8 @@ const data = await res.json();
 | reviewed_at | string | 财务审核时间（通过/拒绝都记录） |
 | rejected_reason | string | 拒绝原因 |
 | remark | string | 业务员备注（供财务审核参考） |
+| recharge_type | string | 充值类型（见下方枚举） |
+| payment_method | string | 充值方式：`wechat` / `alipay` / `bank_card` |
 | created_by_staff_id | int | 业务员 ID（线下订单创建人） |
 | deleted_at | string | 软删除时间（不为空表示已删除） |
 | created_at | string | 创建时间 |
@@ -323,6 +329,8 @@ const data = await res.json();
 | payment_proof_url | string | 否 | 付款凭证图片 URL |
 | created_by_staff_id | int | 否 | 业务员 ID |
 | remark | string | 否 | 备注（供财务审核参考） |
+| recharge_type | string | 否 | 充值类型：`recharge`（充值）/ `retrain_recharge`（复训充值）/ `additional_recharge`（追加充值）/ `qixin_recharge`（齐心会充值），业务员自由填写 |
+| payment_method | string | 否 | 充值方式：`wechat`（微信）/ `alipay`（支付宝）/ `bank_card`（银行卡），业务员自由填写 |
 
 **响应 data：**
 
@@ -471,6 +479,7 @@ const data = await res.json();
 6. 同一订单有 `pending` 状态的退款时不可重复申请（并发保护）
 7. 同一订单有进行中的退款时，不允许重复申请（并发保护 + 幂等控制）
 8. 线下订单（`source=offline`）只能由工作人员发起退款（`source=staff`）
+9. **退款名额自动截断**：退款名额超过可退名额时自动截断为可退名额数，最低为 0，不返回错误。仅校验退款金额是否超过可退款金额
 
 **退款类型自动判断：** 后端根据退款金额自动判定 `type`：
 - 等于订单总金额 → `full`（全额退款）
@@ -486,6 +495,7 @@ const data = await res.json();
 | refund_id | int | 退款自增 ID |
 | status | string | 固定 `pending` |
 | type | string | 退款类型：`full`（全额）/ `partial`（部分），自动判断 |
+| refund_slot_quantity | int | 实际退款名额数（自动截断后） |
 
 **示例：**
 
@@ -835,7 +845,7 @@ Go 服务不可达时返回 `502`。
 | customer_id | int | 学员 ID（按课程查询时可用于区分不同学员） |
 | course_id | int | 课程 ID |
 | type | string | 变动类型（见下表） |
-| type_label | string | 变动类型中文：充值 / 报名消耗 / 退款扣除 / 转赠报名（帮朋友报名） / 转赠报名（获赠名额） |
+| type_label | string | 变动类型中文：充值 / 报名消耗 / 退款扣除 / 帮朋友报名 / 转赠转出 / 转赠收入 |
 | to_customer_id | int | 关联学员ID（不同流水类型含义不同：`transfer_out`=被报名人ID，`gift_out`=接收方ID，`gift_in`=赠与人ID） |
 | slots_change | int | 名额变动（正数=增加，负数=减少） |
 | amount_change | decimal | 金额变动（正数=增加，负数=减少） |
@@ -852,8 +862,8 @@ Go 服务不可达时返回 `502`。
 | enroll_consume | 报名消耗 | 学员报名时消耗名额 |
 | refund_deduct | 退款扣除 | 退款审核通过后扣除 |
 | transfer_out | 帮朋友报名 | A用自有名额帮B报名，A扣名额，备注记录B的ID |
-| gift_out | 转赠转出 | A转赠名额给B，A扣名额+B加名额，所有权转移 |
-| gift_in | 转赠收入 | B收到A转赠的名额，B可用名额增加 |
+| gift_out | 转赠转出 | 分享链接模式：领取成功后发起方记录 |
+| gift_in | 转赠收入 | 分享链接模式：领取成功后接收方记录 |
 
 ---
 
@@ -1107,6 +1117,146 @@ Go 服务不可达时返回 `502`。
 
 ---
 
+### 8.9 payGiftCreate — 创建转赠（分享链接模式）
+
+**使用场景：** 小程序端学员想把自己的课程名额分享给其他人。发起转赠后冻结对应名额，返回 `claim_code`，前端将其拼接为分享链接。每个名额对应一个独立链接。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| giver_id | int | 是 | 发起方客户 ID |
+| course_id | int | 是 | 课程 ID |
+| gift_slots | int | 是 | 转赠名额数（固定为 1） |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| claim_code | string | 12 位随机码，用于拼接分享链接 |
+| expires_at | string | 过期时间（YYYY-MM-DD HH:MM:SS），创建时间 +24 小时 |
+
+**示例：**
+
+```json
+// 请求 POST /api/payGiftCreate
+{
+  "giver_id": 4001,
+  "course_id": 1,
+  "gift_slots": 1
+}
+
+// 响应
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "claim_code": "Ab3x9KmNpQr2",
+    "expires_at": "2026-06-03 14:30:00"
+  }
+}
+```
+
+**后端校验规则：**
+1. `gift_slots` 固定为 1，传其他值返回 400
+2. 发起方在该课程的可用名额 ≥ 1
+3. 冻结名额：`consumed_slots + 1`（available_slots 减少）
+4. 生成 12 位随机 `claim_code`（大写字母+数字），写入转赠记录表（status=pending）
+
+**错误码：** `400` — 账户不存在 / 可用名额不足 / gift_slots 不为 1
+
+---
+
+### 8.10 payGiftQuery — 查询转赠详情
+
+**使用场景：** 接收方点击分享链接后，调用此接口查看转赠信息（发起人、课程、名额、状态等）。**无需鉴权**，未登录用户也能查。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| claim_code | string | 是 | 转赠编码 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| claim_code | string | 转赠编码 |
+| giver_id | int | 发起方客户 ID |
+| giver_name | string | 发起方昵称 |
+| course_id | int | 课程 ID |
+| course_name | string | 课程名称（预留，当前为空） |
+| gift_slots | int | 转赠名额数 |
+| status | string | 转赠状态：`pending` / `claimed` / `expired` / `recalled` |
+| receiver_id | int | 接收方 ID（已领取时有值） |
+| receiver_name | string | 接收方昵称（已领取时有值） |
+| expires_at | string | 过期时间 |
+| created_at | string | 创建时间 |
+
+**过期检测：** 查询时若 status=pending 且当前时间超过 expires_at，自动更新为 expired。
+
+---
+
+### 8.11 payGiftClaim — 领取转赠
+
+**使用场景：** 接收方点击分享链接后，登录后点击"领取名额"调用此接口。领取成功后名额从发起方转移到接收方。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| claim_code | string | 是 | 转赠编码 |
+| receiver_id | int | 是 | 接收方客户 ID |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| success | bool | 是否领取成功 |
+| gift_slots | int | 领取到的名额数 |
+| giver_id | int | 发起方 ID |
+
+**后端校验规则：**
+1. `claim_code` 存在、status=pending、未过期
+2. `receiver_id ≠ giver_id`（不能领取自己的转赠）
+3. 接收方尚未领取过该 code（幂等）
+4. 事务内完成：发起方名额正式消耗 + 接收方名额增加 + 写流水 + 标记 claimed
+
+**流水记录：** 发起方 type=`gift_out`（转赠转出），接收方 type=`gift_in`（转赠收入），同时记录对方用户 ID。
+
+**错误码：** `400` — 转赠已过期 / 已领取 / 非本人 / 领取失败；`404` — claim_code 不存在
+
+**并发安全：** `UPDATE ... WHERE status='pending'` 原子更新，affected_rows=0 表示已被其他人领取。
+
+---
+
+### 8.12 payGiftRecall — 召回转赠
+
+**使用场景：** 发起方发起转赠后，对方尚未领取前，发起方可以主动召回，恢复被冻结的名额。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| claim_code | string | 是 | 转赠编码 |
+| giver_id | int | 是 | 发起方客户 ID |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| success | bool | 是否召回成功 |
+| remaining_slots | int | 召回后发起方可用名额 |
+
+**后端校验规则：**
+1. `claim_code` 存在、发起人是 `giver_id`、status=pending、未过期
+2. 解冻名额：`consumed_slots - 1`（available_slots 恢复）
+3. 标记转赠记录 status=recalled
+
+**错误码：** `400` — 转赠已过期 / 已被领取 / 已召回；`403` — 非发起人无权召回
+
+---
+
 ## 状态枚举值
 
 ### 订单支付状态（orders.status）
@@ -1139,6 +1289,26 @@ Go 服务不可达时返回 `502`。
 | `rejected` | 已拒绝 | 财务审核拒绝退款 |
 | `completed` | 已完成 | 退款已到账（审核通过后直接设为 completed） |
 | `cancelled` | 已取消 | 退款申请被取消 |
+
+### 转赠状态（course_gift_records.status）
+
+| 值 | 含义 | 说明 |
+| :--- | :--- | :--- |
+| `pending` | 等待领取 | 发起方已冻结名额，等待接收方领取 |
+| `claimed` | 已领取 | 接收方已成功领取 |
+| `expired` | 已过期 | 超过 24 小时未领取，链接失效 |
+| `recalled` | 已召回 | 发起方主动召回，名额恢复 |
+
+### 充值类型（orders.recharge_type）
+
+| 值 | 含义 | 说明 |
+| :--- | :--- | :--- |
+| `recharge` | 充值 | 首次充值（小程序）/ 业务员填写 |
+| `additional_recharge` | 追加充值 | 小程序端有历史充值记录时自动判断，或业务员线下填写 |
+| `retrain_recharge` | 复训充值 | 仅业务员线下填写 |
+| `qixin_recharge` | 齐心会充值 | 仅业务员线下填写 |
+
+---
 
 ### 支付流水状态（payment_records.status）
 
