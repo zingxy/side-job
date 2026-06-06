@@ -59,6 +59,57 @@ const data = await res.json();
 
 ---
 
+## 分页与筛选（所有列表接口通用）
+
+所有列表类接口（`*List`、`*AllList`）均支持以下公共参数：
+
+### 分页参数
+
+| 字段 | 类型 | 默认值 | 范围 | 说明 |
+| :--- | :--- | :--- | :--- | :--- |
+| page | int | 1 | ≥1 | 第几页 |
+| page_size | int | 20 | 1~200 | 每页条数，最大 200 |
+
+### 分页响应
+
+列表接口返回的 `data` 中统一包含分页元数据：
+
+```json
+{
+  "code": 200,
+  "data": {
+    "list": [...],
+    "total": 156,
+    "page": 2,
+    "page_size": 20,
+    "total_pages": 8
+  }
+}
+```
+
+不传 `page`/`page_size` 时使用默认值，向后兼容。
+
+### 各接口筛选参数一览
+
+| 接口 | 筛选参数 | 新增（★） |
+| :--- | :--- | :--- |
+| **payOrderAllList** | `start_time`, `end_time`, `status`★, `source`★, `customer_id`★, `course_id`★, `created_by_staff_id`★ | |
+| **payStaffPerformance** | `created_by_staff_id`★, `start_time`★, `end_time`★ | 纯统计，0=查全部业务员，按人分组返回 |
+| **payOrderList** | `customer_id`(必填), `status`★, `start_time`★, `end_time`★, `created_by_staff_id`★ | |
+| **payRefundAllList** | `start_time`, `end_time`, `status`★, `source`★, `applicant_customer_id`★ | |
+| **payRefundPendingList** | `start_time`★, `end_time`★ | 之前全表扫描无筛选 |
+| **payRefundList** | `order_no`(必填), `status`★, `start_time`★, `end_time`★ | |
+| **payOperationLogAll** | `start_time`, `end_time`, `action_type`★, `operator_id`★, `order_no`★ | |
+| **payOperationLogList** | `order_no`(必填), `action_type`★ | |
+| **payCourseAccountList** | `customer_id`(必填), `course_id` | 已有筛选 |
+| **payCourseAccountTransactions** | `customer_id`, `course_id`, `start_time`, `end_time` | 已有筛选 |
+| **payMySlots** | `customer_id`(必填), `course_id` | 新增分页 |
+| **payGiftList** | `giver_id`(必填), `course_id`, `status`★, `start_time`★, `end_time`★ | |
+
+> ★ 表示本次新增的参数。所有筛选参数均为**选填**，不传 = 查全部，向后兼容。
+
+---
+
 ## 一、支付流程
 
 ### 1.1 payCreate — 小程序创建订单（统一下单）
@@ -76,6 +127,7 @@ const data = await res.json();
 | open_id | string | 否 | 用户微信 OpenID |
 | source | string | 否 | 订单来源，默认 `mini_program` |
 | slot_quantity | int | 否 | 名额数量，默认 1 |
+| created_by_staff_id | int | 否 | 绑定的业务员 ID，用于业绩归属。不传默认 0（未绑定） |
 | recharge_type | string | 否 | 充值类型，后端自动判断：有历史充值记录 → `additional_recharge`，否则 → `recharge` |
 | payment_method | string | 否 | 充值方式，后端自动设为 `wechat` |
 
@@ -259,12 +311,24 @@ const data = await res.json();
 | 字段 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
 | customer_id | int | 是 | 客户 ID |
+| page | int | 否 | 页码，默认 1 |
+| page_size | int | 否 | 每页条数，默认 20，最大 200 |
+| status | string | 否 | 按订单状态筛选（见状态枚举） |
+| start_time | string | 否 | 起始时间 |
+| end_time | string | 否 | 结束时间 |
+| recharge_type | string | 否 | 按充值类型筛选：`recharge` / `additional_recharge` / `retrain_recharge` / `qixin_recharge` |
+| payment_method | string | 否 | 按充值方式筛选：`wechat` / `alipay` / `bank_card` |
+| created_by_staff_id | int | 否 | 业务员 ID（筛选该业务员经办的订单） |
 
 **响应 data：**
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | list | array | 订单数组，每项字段同 `payOrderQuery` 的 data（含 `course_id`、`course_account_id`），额外包含： |
+| total | int | 符合条件的总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
 | refunds | array | 该订单的退款明细数组（仅当有退款记录时返回，见下方退款明细字段） |
 | refund_amount | int | 已退总金额（分） |
 | refundable_amount | int | 可退余额（分） |
@@ -289,25 +353,113 @@ const data = await res.json();
 
 ### 2.3 payOrderAllList — 全部订单查询
 
-**使用场景：** 财务/管理员查看系统全部订单，支持时间范围筛选。
+**使用场景：** 财务/管理员查看系统全部订单，支持时间范围筛选和分页。
 
 **请求参数：**
 
 | 字段 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
+| page | int | 否 | 页码，默认 1 |
+| page_size | int | 否 | 每页条数，默认 20，最大 200 |
 | start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
 | end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
+| status | string | 否 | 按订单状态筛选（见状态枚举） |
+| source | string | 否 | 按订单来源筛选（`mini_program` / `offline`） |
+| recharge_type | string | 否 | 按充值类型筛选：`recharge` / `additional_recharge` / `retrain_recharge` / `qixin_recharge` |
+| payment_method | string | 否 | 按充值方式筛选：`wechat` / `alipay` / `bank_card` |
+| customer_id | int | 否 | 按客户 ID 筛选 |
+| course_id | int | 否 | 按课程 ID 筛选 |
+| created_by_staff_id | int | 否 | 业务员 ID（选填，不传=查全部业务员） |
 
 - 同时传 `start_time` + `end_time`：查询该时间范围内的订单
 - 只传 `start_time`：查询该时间之后的订单
 - 只传 `end_time`：查询该时间之前的订单
-- 都不传：返回最新 200 条（按 created_at 倒序）
+- 都不传：返回最新订单（按 created_at 倒序），分页默认 20 条/页
+- 传 `created_by_staff_id`：仅查该业务员绑定的订单，用于业绩统计
 
 **响应 data：**
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | list | array | 订单数组，字段同 `payOrderQuery` 的 data（含 `course_id`、`course_account_id`），额外包含 `payment_no`、`refund_amount`、`refundable_amount`、`has_pending_refund`，以及 `refunds` 退款明细数组（仅当有退款记录时返回，字段同 `payOrderList` 的 `refunds`） |
+| total | int | 符合条件的总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
+
+---
+
+### 2.4 payStaffPerformance — 业务员业绩查询
+
+**使用场景：** 纯统计接口，查业务员业绩（总业绩、净业绩、退款额）。`created_by_staff_id=0` 时返回所有业务员的业绩（按人分组），`>0` 时返回指定业务员。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| created_by_staff_id | int | 否 | 业务员 ID，默认 0。0 = 查全部业务员，按人分组返回 |
+| start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
+| end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list[].staff_id | int | 业务员 ID |
+| list[].total_orders | int | 订单数 |
+| list[].total_amount | int | 总业绩（分） |
+| list[].total_refund_amount | int | 退款总额（分） |
+| list[].net_amount | int | 净业绩 = total_amount - total_refund_amount（分） |
+| summary | object | 所有业务员合计（字段同上） |
+
+**示例请求：**
+
+```json
+// 查全部业务员业绩
+POST /api/payStaffPerformance
+{ "created_by_staff_id": 0 }
+
+// 查业务员 100 在 2026 年 6 月的业绩
+POST /api/payStaffPerformance
+{
+    "created_by_staff_id": 100,
+    "start_time": "2026-06-01 00:00:00",
+    "end_time": "2026-06-30 23:59:59"
+}
+```
+
+**示例响应：**
+
+```json
+{
+    "code": 200,
+    "msg": "success",
+    "data": {
+        "list": [
+            {
+                "staff_id": 100,
+                "total_orders": 15,
+                "total_amount": 198000,
+                "total_refund_amount": 19800,
+                "net_amount": 178200
+            },
+            {
+                "staff_id": 200,
+                "total_orders": 3,
+                "total_amount": 30000,
+                "total_refund_amount": 5000,
+                "net_amount": 25000
+            }
+        ],
+        "summary": {
+            "total_orders": 18,
+            "total_amount": 228000,
+            "total_refund_amount": 24800,
+            "net_amount": 203200
+        }
+    }
+}
+```
 
 ---
 
@@ -611,12 +763,21 @@ const data = await res.json();
 | 字段 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
 | order_no | string | 是 | 订单号 |
+| page | int | 否 | 页码，默认 1 |
+| page_size | int | 否 | 每页条数，默认 20，最大 200 |
+| status | string | 否 | 按退款状态筛选（pending / completed / rejected 等） |
+| start_time | string | 否 | 起始时间 |
+| end_time | string | 否 | 结束时间 |
 
 **响应 data：**
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | list | array | 退款记录数组，每条记录包含： |
+| total | int | 符合条件的总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
 
 **退款记录字段（list[].）：**
 
@@ -648,13 +809,24 @@ const data = await res.json();
 
 **使用场景：** 财务后台查看待处理退款申请。
 
-**请求参数：** 无
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| page | int | 否 | 页码，默认 1 |
+| page_size | int | 否 | 每页条数，默认 20，最大 200 |
+| start_time | string | 否 | 起始时间 |
+| end_time | string | 否 | 结束时间 |
 
 **响应 data：**
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | list | array | 待审核（status=`pending`）退款记录，字段： |
+| total | int | 符合条件的总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
 
 **退款记录字段（list[].）：**
 
@@ -676,22 +848,31 @@ const data = await res.json();
 
 ### 5.4 payRefundAllList — 全部退款记录
 
-**使用场景：** 财务或运营查看所有退款记录，支持时间范围筛选。
+**使用场景：** 财务或运营查看所有退款记录，支持时间范围、状态、来源、申请人筛选。
 
 **请求参数：**
 
 | 字段 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
+| page | int | 否 | 页码，默认 1 |
+| page_size | int | 否 | 每页条数，默认 20，最大 200 |
 | start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
 | end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
+| status | string | 否 | 按退款状态筛选（pending / approved / completed / rejected） |
+| source | string | 否 | 按退款来源筛选（customer / staff） |
+| applicant_customer_id | int | 否 | 按申请人客户 ID 筛选 |
 
-- 时间筛选规则同 `payOrderAllList`，都不传时返回最新 200 条。
+- 时间筛选规则同 `payOrderAllList`，都不传时返回最新退款记录，分页默认 20 条/页。
 
 **响应 data：**
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | list | array | 退款记录数组，每条记录包含退款基础字段（同 `payRefundList`）以及关联订单信息： |
+| total | int | 符合条件的总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
 | order_no | string | 关联订单号 |
 | order_total_amount | int | 关联订单总金额（分） |
 | order_status | string | 关联订单支付状态 |
@@ -706,30 +887,37 @@ const data = await res.json();
 
 **请求参数：**
 
-| 字段       | 类型     | 必填  | 说明  |
-| :------- | :----- | :-- | :-- |
-| order_no | string | 是   | 订单号 |
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| order_no | string | 是 | 订单号 |
+| page | int | 否 | 页码，默认 1 |
+| page_size | int | 否 | 每页条数，默认 20，最大 200 |
+| action_type | string | 否 | 按操作类型筛选（approve / reject / refund_apply 等） |
 
 **响应 data：**
 
-| 字段   | 类型    | 说明     |
-| :--- | :---- | :----- |
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
 | list | array | 操作记录数组 |
+| total | int | 符合条件的总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
 
 **操作记录字段：**
 
-| 字段             | 类型     | 说明                                                |
-| :------------- | :----- | :------------------------------------------------ |
-| id             | int    | 流水自增 ID                                           |
-| order_no       | string | 订单号                                               |
-| operator_id    | int    | 操作人 ID                                            |
-| operator_role  | string | 操作人角色：`sales`（业务员）/ `finance`（财务）/ `customer`（客户） |
-| action_type    | string | 操作类型（见下方枚举）                                       |
-| from_status    | string | 变更前状态                                             |
-| to_status      | string | 变更后状态                                             |
-| reason         | string | 操作原因/拒绝原因                                         |
-| proof_snapshot | string | 凭证快照（JSON）                                        |
-| created_at     | string | 操作时间                                              |
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| id | int | 流水自增 ID |
+| order_no | string | 订单号 |
+| operator_id | int | 操作人 ID |
+| operator_role | string | 操作人角色：`sales`（业务员）/ `finance`（财务）/ `customer`（客户） |
+| action_type | string | 操作类型（见下方枚举） |
+| from_status | string | 变更前状态 |
+| to_status | string | 变更后状态 |
+| reason | string | 操作原因/拒绝原因 |
+| proof_snapshot | string | 凭证快照（JSON） |
+| created_at | string | 操作时间 |
 
 ---
 
@@ -741,16 +929,25 @@ const data = await res.json();
 
 | 字段 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
+| page | int | 否 | 页码，默认 1 |
+| page_size | int | 否 | 每页条数，默认 20，最大 200 |
 | start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
 | end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
+| action_type | string | 否 | 按操作类型筛选（approve / reject / refund_apply 等） |
+| operator_id | int | 否 | 按操作人 ID 筛选 |
+| order_no | string | 否 | 按订单号筛选 |
 
-- 时间筛选规则同 `payOrderAllList`，都不传时返回最新 200 条。
+- 时间筛选规则同 `payOrderAllList`，都不传时返回最新操作记录，分页默认 20 条/页。
 
 **响应 data：**
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | list | array | 全部操作记录数组，字段同 `payOperationLogList` |
+| total | int | 符合条件的总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
 
 ---
 
@@ -790,12 +987,18 @@ Go 服务不可达时返回 `502`。
 | :--- | :--- | :--- | :--- |
 | customer_id | int | 是 | 学员 ID |
 | course_id | int | 否 | 课程 ID（传则只返回该课程账户，不传返回全部） |
+| page | int | 否 | 页码，默认 1 |
+| page_size | int | 否 | 每页条数，默认 20，最大 200 |
 
 **响应 data：**
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | list | array | 课程账户数组，每项包含： |
+| total | int | 符合条件的总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
 
 **账户记录字段（list[].）：**
 
@@ -810,6 +1013,8 @@ Go 服务不可达时返回 `502`。
 | total_slots | int | 累计充值获得名额数 |
 | consumed_slots | int | 已消耗名额数 |
 | refunded_slots | int | 已退款名额数 |
+| total_gifted_slots | int | 累计被转赠名额数（别人转给自己的） |
+| consumed_gifted_slots | int | 已消耗的转赠名额数 |
 | available_slots | int | 可用名额（计算值 = total_slots - consumed_slots - refunded_slots） |
 | created_at | string | 创建时间 |
 | updated_at | string | 更新时间 |
@@ -824,35 +1029,41 @@ Go 服务不可达时返回 `502`。
 
 **请求参数：**
 
-| 字段          | 类型     | 必填  | 说明                       |
-| :---------- | :----- | :-- | :----------------------- |
-| customer_id | int    | 否   | 学员 ID（与 course_id 至少填一个） |
-| course_id   | int    | 否   | 课程 ID（单独传 = 查该课程全部学员流水）  |
-| start_time  | string | 否   | 起始时间                     |
-| end_time    | string | 否   | 结束时间                     |
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 否 | 学员 ID（与 course_id 至少填一个） |
+| course_id | int | 否 | 课程 ID（单独传 = 查该课程全部学员流水） |
+| page | int | 否 | 页码，默认 1 |
+| page_size | int | 否 | 每页条数，默认 20，最大 200 |
+| start_time | string | 否 | 起始时间 |
+| end_time | string | 否 | 结束时间 |
 
 **响应 data：**
 
-| 字段   | 类型    | 说明                      |
-| :--- | :---- | :---------------------- |
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
 | list | array | 流水记录数组（按 created_at 倒序） |
+| total | int | 符合条件的总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
 
 **流水记录字段（list[].）：**
 
-| 字段             | 类型      | 说明                                                                        |
-| :------------- | :------ | :------------------------------------------------------------------------ |
-| id             | int     | 流水 ID                                                                     |
-| customer_id    | int     | 学员 ID（按课程查询时可用于区分不同学员）                                                    |
-| course_id      | int     | 课程 ID                                                                     |
-| type           | string  | 变动类型（见下表）                                                                 |
-| type_label     | string  | 变动类型中文：充值 / 报名消耗 / 退款扣除 / 转赠报名（帮朋友报名） / 转赠报名（获赠名额）                        |
-| to_customer_id | int     | 关联学员ID（不同流水类型含义不同：`transfer_out`=被报名人ID，`gift_out`=接收方ID，`gift_in`=赠与人ID） |
-| slots_change   | int     | 名额变动（正数=增加，负数=减少）                                                         |
-| amount_change  | decimal | 金额变动（正数=增加，负数=减少）                                                         |
-| ref_order_id   | int     | 关联订单 ID（充值/报名时）                                                           |
-| ref_refund_id  | int     | 关联退款单 ID（退款扣除时）                                                           |
-| remark         | string  | 备注                                                                        |
-| created_at     | string  | 变动时间                                                                      |
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| id | int | 流水 ID |
+| customer_id | int | 学员 ID（按课程查询时可用于区分不同学员） |
+| course_id | int | 课程 ID |
+| type | string | 变动类型（见下表） |
+| type_label | string | 变动类型中文：充值 / 报名消耗 / 退款扣除 / 帮朋友报名 / 转赠转出 / 转赠收入 |
+| to_customer_id | int | 关联学员ID（不同流水类型含义不同：`transfer_out`=被报名人ID，`gift_out`=接收方ID，`gift_in`=赠与人ID） |
+| slots_change | int | 名额变动（正数=增加，负数=减少） |
+| amount_change | decimal | 金额变动（正数=增加，负数=减少） |
+| ref_order_id | int | 关联订单 ID（充值/报名时） |
+| ref_refund_id | int | 关联退款单 ID（退款扣除时） |
+| remark | string | 备注 |
+| created_at | string | 变动时间 |
 
 **变动类型：**
 
@@ -1026,12 +1237,18 @@ Go 服务不可达时返回 `502`。
 | :--- | :--- | :--- | :--- |
 | customer_id | int | 是 | 学员 ID |
 | course_id | int | 否 | 课程 ID（不传返回所有课程） |
+| page | int | 否 | 页码（控制 items 明细分页，默认 1） |
+| page_size | int | 否 | 每页条数（控制 items 明细数量，默认 20，最大 200） |
 
 **响应 data：**
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | accounts | array | 课程账户数组，每项包含： |
+| total | int | 符合条件的总记录数（items 明细总数） |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
 
 **账户记录字段（accounts[].）：**
 
@@ -1254,6 +1471,48 @@ Go 服务不可达时返回 `502`。
 3. 标记转赠记录 status=recalled
 
 **错误码：** `400` — 转赠已过期 / 已被领取 / 已召回；`403` — 非发起人无权召回
+
+---
+
+### 8.13 payGiftList — 查询转赠记录列表
+
+**使用场景：** 查询某用户的转赠历史记录，支持按课程、状态、时间范围筛选。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| giver_id | int | 是 | 发起方客户 ID |
+| page | int | 否 | 页码，默认 1 |
+| page_size | int | 否 | 每页条数，默认 20，最大 200 |
+| course_id | int | 否 | 课程 ID（不传返回该用户所有课程的转赠记录） |
+| status | string | 否 | 按转赠状态筛选（pending / claimed / expired / recalled） |
+| start_time | string | 否 | 起始时间 |
+| end_time | string | 否 | 结束时间 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 转赠记录数组（按 created_at 倒序） |
+| total | int | 符合条件的总记录数 |
+| page | int | 当前页码 |
+| page_size | int | 每页条数 |
+| total_pages | int | 总页数 |
+
+**转赠记录字段（list[].）：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| claim_code | string | 12 位转赠编码 |
+| giver_id | int | 发起方客户 ID |
+| course_id | int | 课程 ID |
+| gift_slots | int | 转赠名额数 |
+| status | string | 转赠状态（pending / claimed / expired / recalled，过期状态实时判定不写库） |
+| receiver_id | int | 接收方 ID（claimed 时有值） |
+| expires_at | string | 过期时间 |
+| created_at | string | 创建时间 |
+| claimed_at | string | 领取时间（claimed 时有值） |
 
 ---
 
