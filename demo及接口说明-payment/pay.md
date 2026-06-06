@@ -1014,7 +1014,7 @@ Go 服务不可达时返回 `502`。
 | consumed_slots | int | 已消耗名额数 |
 | refunded_slots | int | 已退款名额数 |
 | total_gifted_slots | int | 累计被转赠名额数（别人转给自己的） |
-| consumed_gifted_slots | int | 已消耗的转赠名额数 |
+| consumed_gifted_slots | int | 已消耗的转赠名额数（仅审计/统计用，不参与任何业务判断；二次转赠拦截走 total_gifted_slots） |
 | available_slots | int | 可用名额（计算值 = total_slots - consumed_slots - refunded_slots） |
 | created_at | string | 创建时间 |
 | updated_at | string | 更新时间 |
@@ -1073,6 +1073,7 @@ Go 服务不可达时返回 `502`。
 | enroll_consume | 报名消耗 | 学员报名时消耗名额 |
 | refund_deduct | 退款扣除 | 退款审核通过后扣除 |
 | transfer_out | 帮朋友报名 | A用自有名额帮B报名，A扣名额，备注记录B的ID |
+| transfer_in | 报名转入 | 帮朋友报名：接收方记录，对应 transfer_out |
 | gift_out | 转赠转出 | 分享链接模式：领取成功后发起方记录 |
 | gift_in | 转赠收入 | 分享链接模式：领取成功后接收方记录 |
 
@@ -1094,6 +1095,7 @@ Go 服务不可达时返回 `502`。
 | deduct_amount | decimal | 是 | 扣减金额（分，由调用方传入，后端不做单价校验） |
 | ref_order_id | int | 否 | 关联报名订单 ID |
 | remark | string | 否 | 备注 |
+| session_id | int | 否 | 课期 ID（传入时，若该学员有转赠名额，会自动标记转赠记录关联到此课期，并同步更新 `consumed_gifted_slots` 计数器） |
 
 **响应 data：**
 
@@ -1134,9 +1136,9 @@ Go 服务不可达时返回 `502`。
 
 ### 8.5 payCourseAccountTransfer — 帮朋友报名（A给B/C报名）
 
-**使用场景：** A用自有名额帮朋友B报名。A消耗自有名额（`consumed_slots+N`），B的报名信息记录在其他系统（不在支付系统课程账户中）。一次调用扣减A名额并写A的流水，备注中记录帮谁报名。给多人报名时循环调用，每次处理一个。
+**使用场景：** A用自有名额帮朋友B报名。A消耗自有名额（`consumed_slots+N`），B 同步获得对应课程名额（`total_slots+N`，标记为 `total_gifted_slots+N` 防止二次转赠）。一次调用完成 A 扣减 + B 增加 + 双边流水，数据库事务保证原子性。给多人报名时循环调用，每次处理一个。
 
-默认每次帮报名1个名额。具体报哪个活动/场次由前端决定，后端只负责扣减名额并记录帮谁报名。
+默认每次帮报名1个名额。具体报哪个活动/场次由前端决定。
 
 **示例**：A用课程X的自有名额给B报名。
 
@@ -1174,13 +1176,15 @@ Go 服务不可达时返回 `502`。
 
 **操作内容**：
 1. A的 `consumed_slots + N`（消耗自有名额）
-2. 写A的流水：`type=transfer_out`，`type_label=帮朋友报名`，`slots_change=-N`，备注记录B的ID
+2. B的 `total_slots + N`，`total_gifted_slots + N`（接收名额，标记为代报名来源，防二次转赠。仅当 `from != to` 时执行，自己报名跳过此步）
+3. 写A的流水：`type=transfer_out`，`slots_change=-N`
+4. 写B的流水：`type=transfer_in`，`slots_change=+N`（仅当 `from != to` 时执行）
 
 ---
 
 ### 8.6 payCourseAccountGift — 名额转赠（A转给B持有）
 
-**使用场景：** A将自己拥有的课程名额转赠给B。转赠后 A 的可用名额减少，B 的可用名额增加（名额所有权转移）。B 可以用转赠来的名额报名课期。不支持链式转赠（B 收到后不能再转给别人），由表单服务器控制。
+**使用场景：** A将自己拥有的课程名额转赠给B。转赠后 A 的可用名额减少，B 的可用名额增加（名额所有权转移）。B 可以用转赠来的名额报名课期。**不支持链式转赠**（B 收到后不能再转给别人），后端通过 `total_gifted_slots` 字段拦截：可转赠名额 = 总名额 - 已消耗 - 已退款 - 已被赠与的名额。
 
 一次调用完成 A 扣减 + B 增加，数据库事务保证原子性。A/B 必须不同人，转赠数量必须大于 0。
 
@@ -1377,10 +1381,11 @@ Go 服务不可达时返回 `502`。
 **后端校验规则：**
 1. `gift_slots` 固定为 1，传其他值返回 400
 2. 发起方在该课程的可用名额 ≥ 1
-3. 冻结名额：`consumed_slots + 1`（available_slots 减少）
-4. 生成 12 位随机 `claim_code`（大写字母+数字），写入转赠记录表（status=pending）
+3. **二次转赠拦截**：可转赠名额 = `total_slots - consumed_slots - refunded_slots - total_gifted_slots`。仅允许转赠自己购买的名额，不能转赠别人赠与的名额（防止链式转赠）
+4. 冻结名额：`consumed_slots + 1`（available_slots 减少）
+5. 生成 12 位随机 `claim_code`（大写字母+数字），写入转赠记录表（status=pending）
 
-**错误码：** `400` — 账户不存在 / 可用名额不足 / gift_slots 不为 1
+**错误码：** `400` — 账户不存在 / 可用名额不足 / gift_slots 不为 1 / 无可转赠名额（全是赠与的）
 
 ---
 
@@ -1407,6 +1412,7 @@ Go 服务不可达时返回 `502`。
 | status | string | 转赠状态：`pending` / `claimed` / `expired` / `recalled` |
 | receiver_id | int | 接收方 ID（已领取时有值） |
 | receiver_name | string | 接收方昵称（已领取时有值） |
+| consumed_session_id | int | 接收方用该转赠名额报名的课期 ID（未报名时为 0） |
 | expires_at | string | 过期时间 |
 | created_at | string | 创建时间 |
 
@@ -1513,6 +1519,37 @@ Go 服务不可达时返回 `502`。
 | expires_at | string | 过期时间 |
 | created_at | string | 创建时间 |
 | claimed_at | string | 领取时间（claimed 时有值） |
+
+---
+
+### 8.14 payGiftLinkedUsers — 查询课期下转赠关联学员对
+
+**使用场景：** 查询某个课程某期下，通过转赠名额报名的学员关联关系（谁转赠给了谁）。前端可通过此接口展示"同班关联"。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| course_id | int | 是 | 课程 ID |
+| session_id | int | 是 | 课期 ID |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| list | array | 转赠关联记录数组 |
+| total | int | 总记录数 |
+
+**关联记录字段（list[].）：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| claim_code | string | 12 位转赠编码 |
+| giver_id | int | 转赠人 ID |
+| receiver_id | int | 接收人 ID |
+| course_id | int | 课程 ID |
+| gift_slots | int | 转赠名额数 |
+| claimed_at | string | 领取时间 |
 
 ---
 
