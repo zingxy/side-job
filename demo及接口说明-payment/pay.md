@@ -93,9 +93,9 @@ const data = await res.json();
 
 | 接口 | 筛选参数 | 新增（★） |
 | :--- | :--- | :--- |
-| **payOrderAllList** | `start_time`, `end_time`, `status`★, `source`★, `customer_id`★, `course_id`★, `created_by_staff_id`★ | |
-| **payStaffPerformance** | `created_by_staff_id`★, `start_time`★, `end_time`★, `payment_method`★ | 纯统计，0=查全部业务员，按人分组返回；仅统计已核销订单 |
-| **payOrderList** | `customer_id`(必填), `status`★, `start_time`★, `end_time`★, `created_by_staff_id`★ | |
+| **payOrderAllList** | `start_time`, `end_time`, `status`, `source`, `customer_id`, `course_id`, `created_by_staff_id`, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除（deleted_at IS NULL） |
+| **payStaffPerformance** | `created_by_staff_id`★, `start_time`★, `end_time`★, `payment_method`★ | 纯统计，0=查全部业务员，按人分组返回；统计已核销+已退款订单 |
+| **payOrderList** | `customer_id`(必填), `status`, `start_time`, `end_time`, `created_by_staff_id`, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除 |
 | **payRefundAllList** | `start_time`, `end_time`, `status`★, `source`★, `applicant_customer_id`★ | |
 | **payRefundPendingList** | `start_time`★, `end_time`★ | 之前全表扫描无筛选 |
 | **payRefundList** | `order_no`(必填), `status`★, `start_time`★, `end_time`★ | |
@@ -107,6 +107,12 @@ const data = await res.json();
 | **payGiftList** | `giver_id`(必填), `course_id`, `status`★, `start_time`★, `end_time`★ | |
 
 > ★ 表示本次新增的参数。所有筛选参数均为**选填**，不传 = 查全部，向后兼容。
+>
+> **通用规则**：
+> - 所有订单列表接口（`payOrderAllList`、`payOrderList`）自动排除已软删除订单（`deleted_at IS NULL`），前端无需额外处理
+> - `verification_status` 传 `verified` 为组合值，后端自动展开为 `IN ('auto_verified','manual_verified')`，前端"已核销"筛选项传此值即可
+> - `refund_status` 通过 EXISTS 子查询关联 `refunds` 表，筛选有对应退款状态的订单（如传 `completed` 返回有已完成退款的订单）
+> - 非法筛选值（不在枚举范围内的）会被后端静默忽略，等价于不传该参数
 
 ---
 
@@ -321,6 +327,8 @@ const data = await res.json();
 | recharge_type | string | 否 | 按充值类型筛选：`recharge` / `additional_recharge` / `retrain_recharge` / `qixin_recharge` |
 | payment_method | string | 否 | 按充值方式筛选：`wechat` / `alipay` / `bank_card` |
 | created_by_staff_id | int | 否 | 业务员 ID（筛选该业务员经办的订单） |
+| verification_status | string | 否 | 按核销状态筛选：`none` / `auto_verified` / `manual_verified` / `pending_review` / `rejected` / `verified`（组合值，= auto_verified + manual_verified） |
+| refund_status | string | 否 | 按退款状态筛选：`pending` / `approved` / `completed` / `rejected`（通过子查询关联 refunds 表，返回有该状态退款的订单） |
 
 **响应 data：**
 
@@ -366,13 +374,15 @@ const data = await res.json();
 | page_size | int | 否 | 每页条数，默认 20，最大 200 |
 | start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
 | end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
-| status | string | 否 | 按订单状态筛选（见状态枚举） |
+| status | string | 否 | 按订单状态筛选（见状态枚举，含 `closed`） |
 | source | string | 否 | 按订单来源筛选（`mini_program` / `offline`） |
 | recharge_type | string | 否 | 按充值类型筛选：`recharge` / `additional_recharge` / `retrain_recharge` / `qixin_recharge` |
 | payment_method | string | 否 | 按充值方式筛选：`wechat` / `alipay` / `bank_card` |
 | customer_id | int | 否 | 按客户 ID 筛选 |
 | course_id | int | 否 | 按课程 ID 筛选 |
 | created_by_staff_id | int | 否 | 业务员 ID（选填，不传=查全部业务员） |
+| verification_status | string | 否 | 按核销状态筛选：`none` / `auto_verified` / `manual_verified` / `pending_review` / `rejected` / `verified`（组合值，= auto_verified + manual_verified） |
+| refund_status | string | 否 | 按退款状态筛选：`pending` / `approved` / `completed` / `rejected`（通过子查询关联 refunds 表，返回有该状态退款的订单） |
 
 - 同时传 `start_time` + `end_time`：查询该时间范围内的订单
 - 只传 `start_time`：查询该时间之后的订单
@@ -394,7 +404,9 @@ const data = await res.json();
 
 ### 2.4 payStaffPerformance — 业务员业绩查询
 
-**使用场景：** 纯统计接口，查业务员业绩（总业绩、净业绩、退款额、未核销金额）。仅统计已核销订单（`auto_verified` + `manual_verified`），未支付/待审核/已关闭的不计入。`created_by_staff_id=0` 时返回所有业务员的业绩（按人分组），`>0` 时返回指定业务员。
+**使用场景：** 纯统计接口，查业务员业绩（总业绩、净业绩、退款额、未核销金额）。统计已核销订单（`auto_verified` + `manual_verified`）及已退款订单（`status` 为 `refunding` / `refunded`），未支付/待审核/已关闭的不计入。`created_by_staff_id=0` 时返回所有业务员的业绩（按人分组），`>0` 时返回指定业务员。
+
+> **业绩计算**：`total_amount` 包含已退款订单金额（退款后 verification_status 被清空但仍计入总业绩），`net_amount = total_amount - total_refund_amount`。
 
 **请求参数：**
 
