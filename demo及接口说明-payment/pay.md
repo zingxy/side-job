@@ -254,7 +254,8 @@ const data = await res.json();
 | external_payment_no | string | 线下支付单号（线下订单才有） |
 | payment_proof_url | string | 付款凭证图片 URL |
 | refund_amount | int | 已退金额（分），状态为 completed 的退款累加 |
-| refundable_amount | int | 可退余额（分），= total_amount - refund_amount |
+| refundable_amount | int | 可退余额（分），= total_amount - refund_amount。仅按已退金额扣减，不按名额消耗扣减（因阶梯定价下单价非线性，无法通过已消耗名额反推已消费金额） |
+| refundable_slots | int | 可退名额数，取 min(账户级可用, 订单级可用)。账户未创建（如 pending_review）时返回 0，不可退款 |
 | has_pending_refund | bool | 是否有进行中（pending 状态）的退款 |
 | payment_deadline_at | string | 支付截止时间 |
 | paid_at | string | 支付时间 |
@@ -292,6 +293,7 @@ const data = await res.json();
     "payment_no": "PAY20260519123456654321",
     "refund_amount": 0,
     "refundable_amount": 9900,
+    "refundable_slots": 1,
     "has_pending_refund": false,
     "created_at": "2026-05-19 12:34:56"
   }
@@ -332,6 +334,7 @@ const data = await res.json();
 | refunds | array | 该订单的退款明细数组（仅当有退款记录时返回，见下方退款明细字段） |
 | refund_amount | int | 已退总金额（分） |
 | refundable_amount | int | 可退余额（分） |
+| refundable_slots | int | 可退名额数 |
 | has_pending_refund | bool | 是否有进行中的退款 |
 
 **退款明细字段（list[].refunds[]）：**
@@ -381,7 +384,7 @@ const data = await res.json();
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
-| list | array | 订单数组，字段同 `payOrderQuery` 的 data（含 `course_id`、`course_account_id`），额外包含 `payment_no`、`refund_amount`、`refundable_amount`、`has_pending_refund`，以及 `refunds` 退款明细数组（仅当有退款记录时返回，字段同 `payOrderList` 的 `refunds`） |
+| list | array | 订单数组，字段同 `payOrderQuery` 的 data（含 `course_id`、`course_account_id`），额外包含 `payment_no`、`refund_amount`、`refundable_amount`、`refundable_slots`、`has_pending_refund`，以及 `refunds` 退款明细数组（仅当有退款记录时返回，字段同 `payOrderList` 的 `refunds`） |
 | total | int | 符合条件的总记录数 |
 | page | int | 当前页码 |
 | page_size | int | 每页条数 |
@@ -626,12 +629,13 @@ POST /api/payStaffPerformance
 1. 订单必须存在
 2. 订单未被软删除（`deleted_at IS NULL`）
 3. 订单状态为 `paid` / `verified` / `refunding` / `refunded`
-4. 退款金额 ≤ 订单总金额
-5. 退款金额 + 已完成退款总额 ≤ 订单总金额
-6. 同一订单有 `pending` 状态的退款时不可重复申请（并发保护）
-7. 同一订单有进行中的退款时，不允许重复申请（并发保护 + 幂等控制）
-8. 线下订单（`source=offline`）只能由工作人员发起退款（`source=staff`）
-9. **退款名额自动截断**：退款名额超过可退名额时自动截断为可退名额数，最低为 0，不返回错误。仅校验退款金额是否超过可退款金额
+4. 订单核销状态不能为 `pending_review`（财务未审核的线下订单不可退款）
+5. 退款金额 ≤ 订单总金额
+6. 退款金额 + 已完成退款总额 ≤ 订单总金额
+7. 同一订单有 `pending` 状态的退款时不可重复申请（并发保护）
+8. 同一订单有进行中的退款时，不允许重复申请（并发保护 + 幂等控制）
+9. 线下订单（`source=offline`）只能由工作人员发起退款（`source=staff`）
+10. **退款名额自动截断**：退款名额超过可退名额时自动截断为可退名额数，最低为 0，不返回错误。仅校验退款金额是否超过可退款金额
 
 **退款类型自动判断：** 后端根据退款金额自动判定 `type`：
 - 等于订单总金额 → `full`（全额退款）
