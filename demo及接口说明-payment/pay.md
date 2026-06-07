@@ -94,7 +94,7 @@ const data = await res.json();
 | 接口 | 筛选参数 | 新增（★） |
 | :--- | :--- | :--- |
 | **payOrderAllList** | `start_time`, `end_time`, `status`★, `source`★, `customer_id`★, `course_id`★, `created_by_staff_id`★ | |
-| **payStaffPerformance** | `created_by_staff_id`★, `start_time`★, `end_time`★ | 纯统计，0=查全部业务员，按人分组返回 |
+| **payStaffPerformance** | `created_by_staff_id`★, `start_time`★, `end_time`★, `payment_method`★ | 纯统计，0=查全部业务员，按人分组返回；仅统计已核销订单 |
 | **payOrderList** | `customer_id`(必填), `status`★, `start_time`★, `end_time`★, `created_by_staff_id`★ | |
 | **payRefundAllList** | `start_time`, `end_time`, `status`★, `source`★, `applicant_customer_id`★ | |
 | **payRefundPendingList** | `start_time`★, `end_time`★ | 之前全表扫描无筛选 |
@@ -394,7 +394,7 @@ const data = await res.json();
 
 ### 2.4 payStaffPerformance — 业务员业绩查询
 
-**使用场景：** 纯统计接口，查业务员业绩（总业绩、净业绩、退款额）。`created_by_staff_id=0` 时返回所有业务员的业绩（按人分组），`>0` 时返回指定业务员。
+**使用场景：** 纯统计接口，查业务员业绩（总业绩、净业绩、退款额、未核销金额）。仅统计已核销订单（`auto_verified` + `manual_verified`），未支付/待审核/已关闭的不计入。`created_by_staff_id=0` 时返回所有业务员的业绩（按人分组），`>0` 时返回指定业务员。
 
 **请求参数：**
 
@@ -403,15 +403,17 @@ const data = await res.json();
 | created_by_staff_id | int | 否 | 业务员 ID，默认 0。0 = 查全部业务员，按人分组返回 |
 | start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
 | end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
+| payment_method | string | 否 | 充值方式筛选：`wechat` / `alipay` / `bank_card`。不传=查全部 |
 
 **响应 data：**
 
 | 字段 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | list[].staff_id | int | 业务员 ID |
-| list[].total_orders | int | 订单数 |
-| list[].total_amount | int | 总业绩（分） |
+| list[].total_orders | int | 已核销订单数 |
+| list[].total_amount | int | 总业绩（分），已核销订单金额总和（含已退款的） |
 | list[].total_refund_amount | int | 退款总额（分） |
+| list[].uncleared_amount | int | 未核销金额（分），`pending_review` 订单金额，不计入业绩，仅供前端参考 |
 | list[].net_amount | int | 净业绩 = total_amount - total_refund_amount（分） |
 | summary | object | 所有业务员合计（字段同上） |
 
@@ -429,6 +431,13 @@ POST /api/payStaffPerformance
     "start_time": "2026-06-01 00:00:00",
     "end_time": "2026-06-30 23:59:59"
 }
+
+// 按充值方式筛选微信支付的业绩
+POST /api/payStaffPerformance
+{
+    "payment_method": "wechat",
+    "created_by_staff_id": 0
+}
 ```
 
 **示例响应：**
@@ -444,6 +453,7 @@ POST /api/payStaffPerformance
                 "total_orders": 15,
                 "total_amount": 198000,
                 "total_refund_amount": 19800,
+                "uncleared_amount": 9900,
                 "net_amount": 178200
             },
             {
@@ -451,6 +461,7 @@ POST /api/payStaffPerformance
                 "total_orders": 3,
                 "total_amount": 30000,
                 "total_refund_amount": 5000,
+                "uncleared_amount": 0,
                 "net_amount": 25000
             }
         ],
@@ -458,6 +469,7 @@ POST /api/payStaffPerformance
             "total_orders": 18,
             "total_amount": 228000,
             "total_refund_amount": 24800,
+            "uncleared_amount": 9900,
             "net_amount": 203200
         }
     }
