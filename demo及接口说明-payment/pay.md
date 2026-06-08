@@ -93,9 +93,9 @@ const data = await res.json();
 
 | 接口 | 筛选参数 | 新增（★） |
 | :--- | :--- | :--- |
-| **payOrderAllList** | `start_time`, `end_time`, `status`, `source`, `customer_id`, `course_id`, `created_by_staff_id`（保留，暂不使用）, `belongs_to_staff_id`★, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除（deleted_at IS NULL） |
-| **payStaffPerformance** | `staff_id`★, `start_time`★, `end_time`★, `payment_method`★ | 按订单归属业务员分组统计（优先 `belongs_to_staff_id`，NULL 时回退 `created_by_staff_id`）；`staff_id` 筛选同时匹配两种归属 |
-| **payOrderList** | `customer_id`(必填), `status`, `start_time`, `end_time`, `created_by_staff_id`（保留，暂不使用）, `belongs_to_staff_id`★, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除 |
+| **payOrderAllList** | `start_time`, `end_time`, `status`, `source`, `customer_id`, `course_id`, `created_by_staff_id`（保留，暂不使用）, `belongs_to_staff_id`★, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除（deleted_at IS NULL）；`created_by_staff_id` 为操作员ID（创建订单人ID） |
+| **payStaffPerformance** | `staff_id`★, `start_time`★, `end_time`★, `payment_method`★ | 按订单归属业务员分组统计（优先 `belongs_to_staff_id`，NULL 时回退 `created_by_staff_id`） |
+| **payOrderList** | `customer_id`(必填), `status`, `start_time`, `end_time`, `created_by_staff_id`（保留，暂不使用）, `belongs_to_staff_id`★, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除；`created_by_staff_id` 为操作员ID（创建订单人ID） |
 | **payRefundAllList** | `start_time`, `end_time`, `status`★, `source`★, `applicant_customer_id`★ | |
 | **payRefundPendingList** | `start_time`★, `end_time`★ | 之前全表扫描无筛选 |
 | **payRefundList** | `order_no`(必填), `status`★, `start_time`★, `end_time`★ | |
@@ -133,7 +133,7 @@ const data = await res.json();
 | open_id | string | 否 | 用户微信 OpenID |
 | source | string | 否 | 订单来源，默认 `mini_program` |
 | slot_quantity | int | 否 | 名额数量，默认 1 |
-| created_by_staff_id | int | 否 | 绑定的业务员 ID，用于业绩归属。不传默认 0（未绑定） |
+| created_by_staff_id | int | 否 | 操作员 ID（创建订单人 ID） |
 | recharge_type | string | 否 | 充值类型，后端自动判断：有历史充值记录 → `additional_recharge`，否则 → `recharge` |
 | payment_method | string | 否 | 充值方式，后端自动设为 `wechat` |
 
@@ -274,7 +274,7 @@ const data = await res.json();
 | remark | string | 业务员备注（供财务审核参考） |
 | recharge_type | string | 充值类型（见下方枚举） |
 | payment_method | string | 充值方式：`wechat` / `alipay` / `bank_card` |
-| created_by_staff_id | int | 业务员 ID（线下订单创建人） |
+| created_by_staff_id | int | 操作员 ID（创建订单人 ID） |
 | belongs_to_staff_id | int | 客户归属业务员 ID（从 customers 表获取，NULL 时业绩统计回退到 created_by_staff_id） |
 | deleted_at | string | 软删除时间（不为空表示已删除） |
 | created_at | string | 创建时间 |
@@ -384,8 +384,8 @@ const data = await res.json();
 | payment_method | string | 否 | 按充值方式筛选：`wechat` / `alipay` / `bank_card` |
 | customer_id | int | 否 | 按客户 ID 筛选 |
 | course_id | int | 否 | 按课程 ID 筛选 |
-| created_by_staff_id | int | 否 | （保留，暂不使用）业务员 ID，不传即可 |
-| belongs_to_staff_id | int | 否 | 业务员 ID（按订单归属业务员筛选，即 `orders.belongs_to_staff_id`） |
+| created_by_staff_id | int | 否 | （保留，暂不使用）操作员 ID（创建订单人 ID），不传即可 |
+| belongs_to_staff_id | int | 否 | 归属业务员 ID（按 `orders.belongs_to_staff_id` 筛选） |
 | verification_status | string | 否 | 按核销状态筛选：`none` / `auto_verified` / `manual_verified` / `pending_review` / `rejected` / `verified`（组合值，= auto_verified + manual_verified） |
 | refund_status | string | 否 | 按退款状态筛选：`pending` / `approved` / `completed` / `rejected`（通过子查询关联 refunds 表，返回有该状态退款的订单） |
 
@@ -393,7 +393,7 @@ const data = await res.json();
 - 只传 `start_time`：查询该时间之后的订单
 - 只传 `end_time`：查询该时间之前的订单
 - 都不传：返回最新订单（按 created_at 倒序），分页默认 20 条/页
-- 传 `belongs_to_staff_id`：仅查该归属业务员绑定的订单，用于按归属筛选（如查某个业务员的客户订单）
+- 传 `belongs_to_staff_id`：仅查该归属业务员绑定的订单，用于按归属筛选（如查某个归属业务员的客户订单）
 
 **响应 data：**
 
@@ -515,7 +515,7 @@ POST /api/payStaffPerformance
 | slot_quantity | int | 否 | 名额数量，默认 1 |
 | external_payment_no | string | 否 | 线下支付单号（转账流水号等） |
 | payment_proof_url | string | 否 | 付款凭证图片 URL |
-| created_by_staff_id | int | 否 | 业务员 ID |
+| created_by_staff_id | int | 否 | 操作员 ID（创建订单人 ID） |
 | remark | string | 否 | 备注（供财务审核参考） |
 | recharge_type | string | 否 | 充值类型：`recharge`（充值）/ `retrain_recharge`（复训充值）/ `additional_recharge`（追加充值）/ `qixin_recharge`（齐心会充值），业务员自由填写 |
 | payment_method | string | 否 | 充值方式：`wechat`（微信）/ `alipay`（支付宝）/ `bank_card`（银行卡），业务员自由填写 |
