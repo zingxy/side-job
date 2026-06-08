@@ -93,9 +93,9 @@ const data = await res.json();
 
 | 接口 | 筛选参数 | 新增（★） |
 | :--- | :--- | :--- |
-| **payOrderAllList** | `start_time`, `end_time`, `status`, `source`, `customer_id`, `course_id`, `created_by_staff_id`, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除（deleted_at IS NULL） |
-| **payStaffPerformance** | `created_by_staff_id`★, `start_time`★, `end_time`★, `payment_method`★ | 按订单归属业务员分组统计（优先 `belongs_to_staff_id`，NULL 时回退 `created_by_staff_id`）；`created_by_staff_id` 筛选同时匹配两种归属 |
-| **payOrderList** | `customer_id`(必填), `status`, `start_time`, `end_time`, `created_by_staff_id`, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除 |
+| **payOrderAllList** | `start_time`, `end_time`, `status`, `source`, `customer_id`, `course_id`, `created_by_staff_id`（保留，暂不使用）, `belongs_to_staff_id`★, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除（deleted_at IS NULL） |
+| **payStaffPerformance** | `staff_id`★, `start_time`★, `end_time`★, `payment_method`★ | 按订单归属业务员分组统计（优先 `belongs_to_staff_id`，NULL 时回退 `created_by_staff_id`）；`staff_id` 筛选同时匹配两种归属 |
+| **payOrderList** | `customer_id`(必填), `status`, `start_time`, `end_time`, `created_by_staff_id`（保留，暂不使用）, `belongs_to_staff_id`★, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除 |
 | **payRefundAllList** | `start_time`, `end_time`, `status`★, `source`★, `applicant_customer_id`★ | |
 | **payRefundPendingList** | `start_time`★, `end_time`★ | 之前全表扫描无筛选 |
 | **payRefundList** | `order_no`(必填), `status`★, `start_time`★, `end_time`★ | |
@@ -329,7 +329,8 @@ const data = await res.json();
 | end_time | string | 否 | 结束时间 |
 | recharge_type | string | 否 | 按充值类型筛选：`recharge` / `additional_recharge` / `retrain_recharge` / `qixin_recharge` |
 | payment_method | string | 否 | 按充值方式筛选：`wechat` / `alipay` / `bank_card` |
-| created_by_staff_id | int | 否 | 业务员 ID（筛选该业务员经办的订单） |
+| created_by_staff_id | int | 否 | （保留，暂不使用）业务员 ID，不传即可 |
+| belongs_to_staff_id | int | 否 | 业务员 ID（按订单归属业务员筛选，即 `orders.belongs_to_staff_id`） |
 | verification_status | string | 否 | 按核销状态筛选：`none` / `auto_verified` / `manual_verified` / `pending_review` / `rejected` / `verified`（组合值，= auto_verified + manual_verified） |
 | refund_status | string | 否 | 按退款状态筛选：`pending` / `approved` / `completed` / `rejected`（通过子查询关联 refunds 表，返回有该状态退款的订单） |
 
@@ -383,7 +384,8 @@ const data = await res.json();
 | payment_method | string | 否 | 按充值方式筛选：`wechat` / `alipay` / `bank_card` |
 | customer_id | int | 否 | 按客户 ID 筛选 |
 | course_id | int | 否 | 按课程 ID 筛选 |
-| created_by_staff_id | int | 否 | 业务员 ID（选填，不传=查全部业务员） |
+| created_by_staff_id | int | 否 | （保留，暂不使用）业务员 ID，不传即可 |
+| belongs_to_staff_id | int | 否 | 业务员 ID（按订单归属业务员筛选，即 `orders.belongs_to_staff_id`） |
 | verification_status | string | 否 | 按核销状态筛选：`none` / `auto_verified` / `manual_verified` / `pending_review` / `rejected` / `verified`（组合值，= auto_verified + manual_verified） |
 | refund_status | string | 否 | 按退款状态筛选：`pending` / `approved` / `completed` / `rejected`（通过子查询关联 refunds 表，返回有该状态退款的订单） |
 
@@ -391,7 +393,7 @@ const data = await res.json();
 - 只传 `start_time`：查询该时间之后的订单
 - 只传 `end_time`：查询该时间之前的订单
 - 都不传：返回最新订单（按 created_at 倒序），分页默认 20 条/页
-- 传 `created_by_staff_id`：仅查该业务员绑定的订单，用于业绩统计
+- 传 `belongs_to_staff_id`：仅查该归属业务员绑定的订单，用于按归属筛选（如查某个业务员的客户订单）
 
 **响应 data：**
 
@@ -407,19 +409,19 @@ const data = await res.json();
 
 ### 2.4 payStaffPerformance — 业务员业绩查询
 
-**使用场景：** 纯统计接口，查业务员业绩（总业绩、净业绩、退款额、未核销金额）。统计已核销订单（`auto_verified` + `manual_verified`）及已退款订单（`status` 为 `refunding` / `refunded`），未支付/待审核/已关闭的不计入。`created_by_staff_id=0` 时返回所有业务员的业绩（按人分组），`>0` 时返回指定业务员。
+**使用场景：** 纯统计接口，查业务员业绩（总业绩、净业绩、退款额、未核销金额）。统计已核销订单（`auto_verified` + `manual_verified`）及已退款订单（`status` 为 `refunding` / `refunded`），未支付/待审核/已关闭的不计入。`staff_id=0` 时返回所有业务员的业绩（按人分组），`>0` 时返回指定业务员。
 
-> **业绩归属规则**：按订单的「归属业务员」分组统计。订单创建时会从 `customers` 表查询该客户的 `sales_agent_id` 存入 `orders.belongs_to_staff_id`字段。统计时优先使用 `belongs_to_staff_id`，若为 NULL（客户无归属业务员）则回退到 `orders.created_by_staff_id`（创建订单的业务员）。
+> **业绩归属规则**：按订单的「归属业务员」分组统计。订单创建时会从 `customers` 表查询该客户的 `sales_agent_id` 存入 `orders.belongs_to_staff_id` 字段。统计时优先使用 `belongs_to_staff_id`，若为 NULL（客户无归属业务员）则回退到 `orders.created_by_staff_id`（创建订单的业务员）。
 >
 > **业绩计算**：`total_amount` 包含已退款订单金额（退款后 verification_status 被清空但仍计入总业绩），`net_amount = total_amount - total_refund_amount`。
 >
-> **筛选逻辑**：`created_by_staff_id` 参数同时匹配 `belongs_to_staff_id` 和（belongs 为 NULL 时的）`created_by_staff_id`，即能正确筛选出该业务员实际归属的所有订单。
+> **筛选逻辑**：`staff_id` 参数同时匹配 `belongs_to_staff_id` 和（belongs 为 NULL 时的）`created_by_staff_id`，即能正确筛选出该业务员实际归属的所有订单。前端使用只管传入要查的业务员 ID 即可，后端自动兜底。
 
 **请求参数：**
 
 | 字段 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
-| created_by_staff_id | int | 否 | 业务员 ID，默认 0。0 = 查全部业务员，按人分组返回 |
+| staff_id | int | 否 | 业务员 ID，默认 0。0 = 查全部业务员，按人分组返回 |
 | start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
 | end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
 | payment_method | string | 否 | 充值方式筛选：`wechat` / `alipay` / `bank_card`。不传=查全部 |
@@ -441,12 +443,12 @@ const data = await res.json();
 ```json
 // 查全部业务员业绩
 POST /api/payStaffPerformance
-{ "created_by_staff_id": 0 }
+{ "staff_id": 0 }
 
 // 查业务员 100 在 2026 年 6 月的业绩
 POST /api/payStaffPerformance
 {
-    "created_by_staff_id": 100,
+    "staff_id": 100,
     "start_time": "2026-06-01 00:00:00",
     "end_time": "2026-06-30 23:59:59"
 }
@@ -455,7 +457,7 @@ POST /api/payStaffPerformance
 POST /api/payStaffPerformance
 {
     "payment_method": "wechat",
-    "created_by_staff_id": 0
+    "staff_id": 0
 }
 ```
 
