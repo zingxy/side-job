@@ -94,7 +94,7 @@ const data = await res.json();
 | 接口 | 筛选参数 | 新增（★） |
 | :--- | :--- | :--- |
 | **payOrderAllList** | `start_time`, `end_time`, `status`, `source`, `customer_id`, `course_id`, `created_by_staff_id`, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除（deleted_at IS NULL） |
-| **payStaffPerformance** | `created_by_staff_id`★, `start_time`★, `end_time`★, `payment_method`★ | 纯统计，0=查全部业务员，按人分组返回；统计已核销+已退款订单 |
+| **payStaffPerformance** | `created_by_staff_id`★, `start_time`★, `end_time`★, `payment_method`★ | 按订单归属业务员分组统计（优先 `belongs_to_staff_id`，NULL 时回退 `created_by_staff_id`）；`created_by_staff_id` 筛选同时匹配两种归属 |
 | **payOrderList** | `customer_id`(必填), `status`, `start_time`, `end_time`, `created_by_staff_id`, `recharge_type`, `payment_method`, `verification_status`★, `refund_status`★ | 已删除订单自动排除 |
 | **payRefundAllList** | `start_time`, `end_time`, `status`★, `source`★, `applicant_customer_id`★ | |
 | **payRefundPendingList** | `start_time`★, `end_time`★ | 之前全表扫描无筛选 |
@@ -273,6 +273,7 @@ const data = await res.json();
 | recharge_type | string | 充值类型（见下方枚举） |
 | payment_method | string | 充值方式：`wechat` / `alipay` / `bank_card` |
 | created_by_staff_id | int | 业务员 ID（线下订单创建人） |
+| belongs_to_staff_id | int | 客户归属业务员 ID（从 customers 表获取，NULL 时业绩统计回退到 created_by_staff_id） |
 | deleted_at | string | 软删除时间（不为空表示已删除） |
 | created_at | string | 创建时间 |
 | updated_at | string | 更新时间 |
@@ -406,7 +407,11 @@ const data = await res.json();
 
 **使用场景：** 纯统计接口，查业务员业绩（总业绩、净业绩、退款额、未核销金额）。统计已核销订单（`auto_verified` + `manual_verified`）及已退款订单（`status` 为 `refunding` / `refunded`），未支付/待审核/已关闭的不计入。`created_by_staff_id=0` 时返回所有业务员的业绩（按人分组），`>0` 时返回指定业务员。
 
+> **业绩归属规则**：按订单的「归属业务员」分组统计。订单创建时会从 `customers` 表查询该客户的 `sales_agent_id` 存入 `orders.belongs_to_staff_id`字段。统计时优先使用 `belongs_to_staff_id`，若为 NULL（客户无归属业务员）则回退到 `orders.created_by_staff_id`（创建订单的业务员）。
+>
 > **业绩计算**：`total_amount` 包含已退款订单金额（退款后 verification_status 被清空但仍计入总业绩），`net_amount = total_amount - total_refund_amount`。
+>
+> **筛选逻辑**：`created_by_staff_id` 参数同时匹配 `belongs_to_staff_id` 和（belongs 为 NULL 时的）`created_by_staff_id`，即能正确筛选出该业务员实际归属的所有订单。
 
 **请求参数：**
 
