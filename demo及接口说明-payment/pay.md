@@ -145,6 +145,7 @@ const data = await res.json();
 | :--- | :--- | :--- |
 | order_no | string | 订单号（如 `ORD20260519123456123456`） |
 | order_id | int | 订单自增 ID |
+| belongs_to_staff_id | int | 客户归属业务员 ID（从 customers 表获取，NULL 时为 0） |
 | payment_params | object | 微信支付调起参数（见下表） |
 
 **payment_params 字段：**
@@ -186,6 +187,7 @@ const data = await res.json();
   "data": {
     "order_no": "ORD20260519123456123456",
     "order_id": 1,
+    "belongs_to_staff_id": 0,
     "payment_params": {
       "appId": "wx1234567890abcdef",
       "timeStamp": "1684923456",
@@ -523,6 +525,7 @@ POST /api/payStaffPerformance
 | order_id | int | 订单自增 ID |
 | order_no | string | 订单号 |
 | status | string | 固定 `paid` |
+| belongs_to_staff_id | int | 客户归属业务员 ID（从 customers 表获取，NULL 时为 0） |
 
 ---
 
