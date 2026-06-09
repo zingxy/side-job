@@ -132,7 +132,7 @@ const data = await res.json();
 | body | string | 否 | 商品描述，默认"课程订单" |
 | open_id | string | 否 | 用户微信 OpenID |
 | source | string | 否 | 订单来源，默认 `mini_program` |
-| slot_quantity | int | 否 | 名额数量，默认 1 |
+| slot_quantity | int | 否 | 名额数量，默认 1，**必须大于 0** |
 | created_by_staff_id | int | 否 | 操作员 ID（创建订单人 ID） |
 | recharge_type | string | 否 | 充值类型，后端自动判断：有历史充值记录 → `additional_recharge`，否则 → `recharge` |
 | payment_method | string | 否 | 充值方式，后端自动设为 `wechat` |
@@ -512,7 +512,7 @@ POST /api/payStaffPerformance
 | customer_id | int | 是 | 客户 ID |
 | course_id | int | 是 | 课程 ID |
 | amount | int | 是 | 总金额（分） |
-| slot_quantity | int | 否 | 名额数量，默认 1 |
+| slot_quantity | int | 否 | 名额数量，默认 1，**必须大于 0** |
 | external_payment_no | string | 否 | 线下支付单号（转账流水号等） |
 | payment_proof_url | string | 否 | 付款凭证图片 URL |
 | created_by_staff_id | int | 否 | 操作员 ID（创建订单人 ID） |
@@ -652,8 +652,8 @@ POST /api/payStaffPerformance
 | :--- | :--- | :--- | :--- |
 | order_no | string | 是 | 订单号 |
 | applicant_customer_id | int | 是 | 申请人客户 ID（退款归属） |
-| amount | int | 是 | 退款金额（分） |
-| refund_slot_quantity | int | 是 | 退款名额数量 |
+| amount | int | 是 | 退款金额（分）。允许为 0（只退名额场景），但与 `refund_slot_quantity` 不能同时为 0 |
+| refund_slot_quantity | int | 是 | 退款名额数量。允许为 0（只退金额场景），但与 `amount` 不能同时为 0 |
 | reason | string | 否 | 退款原因 |
 | source | string | 否 | 退款来源：`customer`（客户申请）/ `staff`（工作人员），默认 `customer` |
 | operator_id | int | staff 时必填 | 操作人 ID，`source=staff` 时必填，`source=customer` 时可省略 |
@@ -662,14 +662,14 @@ POST /api/payStaffPerformance
 
 1. 订单必须存在
 2. 订单未被软删除（`deleted_at IS NULL`）
-3. 订单状态为 `paid` / `refunding` / `refunded`
+3. 订单状态为 `paid` / `verified` / `refunding`
 4. 订单核销状态不能为 `pending_review`（财务未审核的线下订单不可退款）
-5. 退款金额 ≤ 订单总金额
-6. 退款金额 + 已完成退款总额 ≤ 订单总金额
-7. 同一订单有 `pending` 状态的退款时不可重复申请（并发保护）
-8. 同一订单有进行中的退款时，不允许重复申请（并发保护 + 幂等控制）
+5. **`amount` 和 `refund_slot_quantity` 不能同时为 0**
+6. 退款金额 + 已完成退款总额 ≤ 订单总金额（仅在 `amount > 0` 时校验）
+7. 同一订单有 `pending`/`approved` 状态的退款时不可重复申请（并发保护）
+8. 5 分钟内同一订单同一申请人仅允许一笔 `pending` 退款（防刷）
 9. 线下订单（`source=offline`）只能由工作人员发起退款（`source=staff`）
-10. **退款名额自动截断**：退款名额超过可退名额时自动截断为可退名额数，最低为 0，不返回错误。仅校验退款金额是否超过可退款金额
+10. **退款名额自动截断**（仅在 `refund_slot_quantity > 0` 时执行）：退款名额超过可退名额时自动截断为可退名额数（取账户级可用名额和订单级可用名额的较小值）。若截断后 `max_refund_slots <= 0`，则拒绝申请
 
 **退款类型自动判断：** 后端根据退款金额自动判定 `type`：
 - 等于订单总金额 → `full`（全额退款）
@@ -685,12 +685,12 @@ POST /api/payStaffPerformance
 | refund_id | int | 退款自增 ID |
 | status | string | 固定 `pending` |
 | type | string | 退款类型：`full`（全额）/ `partial`（部分），自动判断 |
-| refund_slot_quantity | int | 实际退款名额数（自动截断后） |
+| refund_slot_quantity | int | 实际退款名额数（自动截断后）。只退金额时返回 0 |
 
 **示例：**
 
 ```json
-// 请求 POST /api/payRefund（客户申请，退 1 个名额）
+// 请求 POST /api/payRefund（正常退款：退金额 + 名额）
 {
   "order_no": "ORD20260519123456123456",
   "applicant_customer_id": 1,
@@ -700,13 +700,24 @@ POST /api/payStaffPerformance
   "source": "customer"
 }
 
-// 请求 POST /api/payRefund（工作人员代申请，退多个名额）
+// 请求 POST /api/payRefund（只退金额，名额不退）
 {
   "order_no": "ORD20260519123456123456",
   "applicant_customer_id": 1,
-  "amount": 29700,
-  "refund_slot_quantity": 3,
-  "reason": "客户要求退款",
+  "amount": 5000,
+  "refund_slot_quantity": 0,
+  "reason": "补退金额",
+  "source": "staff",
+  "operator_id": 1
+}
+
+// 请求 POST /api/payRefund（只退名额，金额不退）
+{
+  "order_no": "ORD20260519123456123456",
+  "applicant_customer_id": 1,
+  "amount": 0,
+  "refund_slot_quantity": 2,
+  "reason": "收回名额",
   "source": "staff",
   "operator_id": 1
 }
@@ -719,7 +730,7 @@ POST /api/payStaffPerformance
     "refund_no": "RF20260519123456123456",
     "refund_id": 1,
     "status": "pending",
-    "type": "full"
+    "type": "partial"
   }
 }
 ```
