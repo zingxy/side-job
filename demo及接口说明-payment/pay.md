@@ -331,7 +331,7 @@ const data = await res.json();
 | payment_method | string | 否 | 按充值方式筛选：`wechat` / `alipay` / `bank_card` |
 | created_by_staff_id | int | 否 | （保留，暂不使用）业务员 ID，不传即可 |
 | belongs_to_staff_id | int | 否 | 业务员 ID（按订单归属业务员筛选，即 `orders.belongs_to_staff_id`） |
-| verification_status | string | 否 | 按核销状态筛选：`none` / `auto_verified` / `manual_verified` / `pending_review` / `rejected` / `verified`（组合值，= auto_verified + manual_verified） |
+| verification_status | string | 否 | 按核销状态筛选。前端建议传 `verified`（组合值，同时匹配 `auto_verified` + `manual_verified`，即所有已核销订单）、`pending_review`、`rejected`。也可单独传 `auto_verified` / `manual_verified` / `none` |
 | refund_status | string | 否 | 按退款状态筛选：`pending` / `approved` / `completed` / `rejected`（通过子查询关联 refunds 表，返回有该状态退款的订单） |
 
 **响应 data：**
@@ -386,7 +386,7 @@ const data = await res.json();
 | course_id | int | 否 | 按课程 ID 筛选 |
 | created_by_staff_id | int | 否 | （保留，暂不使用）操作员 ID（创建订单人 ID），不传即可 |
 | belongs_to_staff_id | int | 否 | 归属业务员 ID（按 `orders.belongs_to_staff_id` 筛选） |
-| verification_status | string | 否 | 按核销状态筛选：`none` / `auto_verified` / `manual_verified` / `pending_review` / `rejected` / `verified`（组合值，= auto_verified + manual_verified） |
+| verification_status | string | 否 | 按核销状态筛选。前端建议传 `verified`（组合值，同时匹配 `auto_verified` + `manual_verified`，即所有已核销订单）、`pending_review`、`rejected`。也可单独传 `auto_verified` / `manual_verified` / `none` |
 | refund_status | string | 否 | 按退款状态筛选：`pending` / `approved` / `completed` / `rejected`（通过子查询关联 refunds 表，返回有该状态退款的订单） |
 
 - 同时传 `start_time` + `end_time`：查询该时间范围内的订单
@@ -662,7 +662,7 @@ POST /api/payStaffPerformance
 
 1. 订单必须存在
 2. 订单未被软删除（`deleted_at IS NULL`）
-3. 订单状态为 `paid` / `verified` / `refunding` / `refunded`
+3. 订单状态为 `paid` / `refunding` / `refunded`
 4. 订单核销状态不能为 `pending_review`（财务未审核的线下订单不可退款）
 5. 退款金额 ≤ 订单总金额
 6. 退款金额 + 已完成退款总额 ≤ 订单总金额
@@ -1599,8 +1599,6 @@ Go 服务不可达时返回 `502`。
 | :--- | :--- | :--- |
 | `pending_payment` | 待支付 | 小程序订单创建后、未支付前 |
 | `paid` | 已支付 | 支付成功，但尚未核销或财务审核 |
-| `verified` | 已核销 | 订单已生效（系统自动核销后更新为此状态） |
-| `rejected` | 已拒绝 | 财务审核拒绝（仅限线下订单） |
 | `refunding` | 部分退款 | 已有一笔或多笔部分退款完成，可继续退款 |
 | `refunded` | 已退款 | 全额退款完成，不可再退 |
 | `closed` | 已关闭 | 超时未支付或支付失败被关闭 |
@@ -1614,6 +1612,7 @@ Go 服务不可达时返回 `502`。
 | `manual_verified` | 人工核销 | 财务审核通过后标记 |
 | `pending_review` | 待审核 | 线下订单创建后等待财务审核 |
 | `rejected` | 审核拒绝 | 财务拒绝线下订单 |
+| `verified` | 组合查询值 | 查询接口专用，同时匹配 `auto_verified` + `manual_verified`，数据库存储不会写入此值 |
 
 ### 退款状态（refunds.status）
 
