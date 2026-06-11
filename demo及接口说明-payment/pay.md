@@ -373,22 +373,21 @@ const data = await res.json();
 
 **请求参数：**
 
-| 字段 | 类型 | 必填 | 说明 |
-| :--- | :--- | :--- | :--- |
-| page | int | 否 | 页码，默认 1 |
-| page_size | int | 否 | 每页条数，默认 20，最大 200 |
-| start_time | string | 否 | 起始时间，格式 `YYYY-MM-DD HH:MM:SS` |
-| end_time | string | 否 | 结束时间，格式 `YYYY-MM-DD HH:MM:SS` |
-| status | string | 否 | 按订单状态筛选（见状态枚举，含 `closed`） |
-| source | string | 否 | 按订单来源筛选（`mini_program` / `offline`） |
-| recharge_type | string | 否 | 按充值类型筛选：`recharge` / `additional_recharge` / `retrain_recharge` / `qixin_recharge` |
-| payment_method | string | 否 | 按充值方式筛选：`wechat` / `alipay` / `bank_card` |
-| customer_id | int | 否 | 按客户 ID 筛选 |
-| course_id | int | 否 | 按课程 ID 筛选 |
-| created_by_staff_id | int | 否 | （保留，暂不使用）操作员 ID（创建订单人 ID），不传即可 |
-| belongs_to_staff_id | int | 否 | 归属业务员 ID（按 `orders.belongs_to_staff_id` 筛选） |
-| verification_status | string | 否 | 按核销状态筛选。前端建议传 `verified`（组合值，同时匹配 `auto_verified` + `manual_verified`，即所有已核销订单）、`pending_review`、`rejected`。也可单独传 `auto_verified` / `manual_verified` / `none` |
-| refund_status | string | 否 | 按退款状态筛选：`pending` / `approved` / `completed` / `rejected`（通过子查询关联 refunds 表，返回有该状态退款的订单） |
+| 字段                  | 类型     | 必填  | 说明                                                                                                                                       |
+| :------------------ | :----- | :-- | :--------------------------------------------------------------------------------------------------------------------------------------- |
+| page                | int    | 否   | 页码，默认 1                                                                                                                                  |
+| page_size           | int    | 否   | 每页条数，默认 20，最大 200                                                                                                                        |
+| start_time          | string | 否   | 起始时间，格式 `YYYY-MM-DD HH:MM:SS`                                                                                                            |
+| end_time            | string | 否   | 结束时间，格式 `YYYY-MM-DD HH:MM:SS`                                                                                                            |
+| status              | string | 否   | 按订单状态筛选（见状态枚举，含 `closed`）                                                                                                                |
+| source              | string | 否   | 按订单来源筛选（`mini_program` / `offline`）                                                                                                      |
+| recharge_type       | string | 否   | 按充值类型筛选：`recharge` / `additional_recharge` / `retrain_recharge` / `qixin_recharge`                                                       |
+| payment_method      | string | 否   | 按充值方式筛选：`wechat` / `alipay` / `bank_card`                                                                                                |
+| customer_id         | int    | 否   | 按客户 ID 筛选                                                                                                                                |
+| course_id           | int    | 否   | 按课程 ID 筛选                                                                                                                                |
+| created_by_staff_id | int    | 否   | 业务员 ID（选填，不传=查全部业务员）                                                                                                                     |
+| verification_status | string | 否   | 按核销状态筛选：`none` / `auto_verified` / `manual_verified` / `pending_review` / `rejected` / `verified`（组合值，= auto_verified + manual_verified） |
+| refund_status       | string | 否   | 按退款状态筛选：`pending` / `approved` / `completed` / `rejected`（通过子查询关联 refunds 表，返回有该状态退款的订单）                                                 |
 
 - 同时传 `start_time` + `end_time`：查询该时间范围内的订单
 - 只传 `start_time`：查询该时间之后的订单
