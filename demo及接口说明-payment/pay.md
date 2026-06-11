@@ -274,6 +274,7 @@ const data = await res.json();
 | remark | string | 业务员备注（供财务审核参考） |
 | recharge_type | string | 充值类型（见下方枚举） |
 | payment_method | string | 充值方式：`wechat` / `alipay` / `bank_card` |
+| recharge_account | string | 充值目标账户（手动输入，如支付宝账号/银行卡号等） |
 | created_by_staff_id | int | 操作员 ID（创建订单人 ID） |
 | belongs_to_staff_id | int | 客户归属业务员 ID（从 customers 表获取，NULL 时业绩统计回退到 created_by_staff_id） |
 | deleted_at | string | 软删除时间（不为空表示已删除） |
@@ -519,6 +520,7 @@ POST /api/payStaffPerformance
 | remark | string | 否 | 备注（供财务审核参考） |
 | recharge_type | string | 否 | 充值类型：`recharge`（充值）/ `retrain_recharge`（复训充值）/ `additional_recharge`（追加充值）/ `qixin_recharge`（齐心会充值），业务员自由填写 |
 | payment_method | string | 否 | 充值方式：`wechat`（微信）/ `alipay`（支付宝）/ `bank_card`（银行卡），业务员自由填写 |
+| recharge_account | string | 否 | 充值目标账户（如支付宝账号、银行卡号等），业务员自由填写 |
 
 **响应 data：**
 
@@ -634,6 +636,79 @@ POST /api/payStaffPerformance
 | order_no | string | 订单号 |
 | deleted_at | string | 软删除时间 |
 
+### 3.6 payOrderModify — 管理员修改订单信息
+
+**使用场景：** 管理员修正线下订单信息（金额、名额、课程、凭证等）。仅线下订单（`source=offline`）可修改，已核销/已删除/有进行中退款的订单不可修改。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| order_no | string | 是 | 订单号 |
+| operator_id | int | 是 | 操作人 ID（当前登录用户 ID） |
+| total_amount | int | 否 | 修改后的订单总金额（分） |
+| slot_quantity | int | 否 | 修改后的名额数量，**必须大于 0** |
+| unit_price_amount | int | 否 | 修改后的单价（分） |
+| course_id | int | 否 | 修改后的课程 ID，**>= 0**（0=万能订单） |
+| remark | string | 否 | 修改后的备注 |
+| external_payment_no | string | 否 | 修改后的线下支付单号 |
+| payment_proof_url | string | 否 | 修改后的付款凭证 URL |
+| payment_method | string | 否 | 修改后的充值方式：`wechat` / `alipay` / `bank_card` |
+| recharge_type | string | 否 | 修改后的充值类型 |
+| recharge_account | string | 否 | 修改后的充值目标账户 |
+
+**校验规则：**
+
+1. 小程序订单（`source=mini_program`）不可修改
+2. 已软删除订单不可操作
+3. 已核销订单（`verification_status` 为 `manual_verified` 或 `auto_verified`）不可修改
+4. 有进行中退款（`pending`/`approved`/`completed`）的订单不可修改
+5. `slot_quantity` 必须 > 0
+6. `course_id` 必须 > 0（临时限制）
+7. 至少传一个有效修改字段，否则返回 400
+8. **并发保护**：更新前重读订单最新状态，防止修改期间被并发核销或删除
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| order_no | string | 订单号 |
+| changes | string | 变更记录字符串（格式：`字段名: 旧值 -> 新值; 字段名: 旧值 -> 新值`） |
+
+**与 `payOrderResubmit` 的区别：**
+
+| 维度 | `payOrderResubmit` | `payOrderModify` |
+| :--- | :--- | :--- |
+| 用途 | 业务员重新提交被拒订单 | 管理员修正订单信息 |
+| 状态限制 | 仅 `pending_review` / `rejected` | 所有未核销的线下订单 |
+| `pending_review` 时 | 核心字段（金额/客户/课程）锁定 | **不锁定，全部可改** |
+| 结果 | `verification_status → pending_review` | 不改 `verification_status` |
+| 操作日志 | `action_type=resubmit` | `action_type=modify` |
+
+**示例：**
+
+```json
+// 请求 POST /api/payOrderModify
+{
+  "order_no": "ORD20260610000001000300",
+  "operator_id": 1,
+  "remark": "修正备注信息",
+  "total_amount": 60000,
+  "slot_quantity": 3,
+  "recharge_account": "new_account@example.com"
+}
+
+// 响应
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "order_no": "ORD20260610000001000300",
+    "changes": "remark: 原始备注 -> 修正备注信息; total_amount: 50000 -> 60000; slot_quantity: 5 -> 3; recharge_account: old@example.com -> new_account@example.com"
+  }
+}
+```
+
 ---
 
 ## 四、退款流程
@@ -669,7 +744,7 @@ POST /api/payStaffPerformance
 7. 同一订单有 `pending`/`approved` 状态的退款时不可重复申请（并发保护）
 8. 5 分钟内同一订单同一申请人仅允许一笔 `pending` 退款（防刷）
 9. 线下订单（`source=offline`）只能由工作人员发起退款（`source=staff`）
-10. **退款名额自动截断**（仅在 `refund_slot_quantity > 0` 时执行）：退款名额超过可退名额时自动截断为可退名额数（取账户级可用名额和订单级可用名额的较小值）。若截断后 `max_refund_slots <= 0`，则拒绝申请
+10. **退款名额自动截断**（仅在 `refund_slot_quantity > 0` 时执行）：退款名额超过可退名额时自动截断为可退名额数（取账户级可用名额和订单级可用名额的较小值）。若截断后 `max_refund_slots <= 0`，则拒绝申请。**账户级可退名额** = `total_slots - consumed_slots - refunded_slots - total_gifted_slots`（排除转赠名额，防止退掉别人赠与的名额）
 
 **退款类型自动判断：** 后端根据退款金额自动判定 `type`：
 - 等于订单总金额 → `full`（全额退款）
@@ -754,6 +829,9 @@ POST /api/payStaffPerformance
 - 小程序订单（`channel=wechat_original_route`）：先调微信退款 API，成功后更新退款单状态为 `completed`
 - 线下订单（`channel=offline_manual`）：直接更新退款单状态为 `completed`
 - 同时根据退款类型更新订单状态：`full` → `refunded`，`partial` → `refunding`
+- 订单状态更新使用条件 UPDATE（`WHERE id=? AND status=?`）防并发覆盖，affected_rows=0 时 rollback 返回 409
+- 课程账户更新使用乐观锁（`WHERE (total_slots - consumed_slots - refunded_slots - total_gifted_slots) >= refund_slots`），affected_rows=0 时 rollback 返回 400
+- 退款流水记录插入失败时，整个事务 rollback，返回 500
 
 **审核拒绝时：** 更新退款单状态为 `rejected`，订单状态不变，前端可重新申请退款。
 
@@ -1062,9 +1140,9 @@ Go 服务不可达时返回 `502`。
 | total_slots | int | 累计充值获得名额数 |
 | consumed_slots | int | 已消耗名额数 |
 | refunded_slots | int | 已退款名额数 |
-| total_gifted_slots | int | 累计被转赠名额数（别人转给自己的） |
-| consumed_gifted_slots | int | 已消耗的转赠名额数（仅审计/统计用，不参与任何业务判断；二次转赠拦截走 total_gifted_slots） |
-| available_slots | int | 可用名额（计算值 = total_slots - consumed_slots - refunded_slots） |
+| total_gifted_slots | int | 累计被转赠名额数（别人转给自己的，含代报名 transfer 和转赠 gift） |
+| consumed_gifted_slots | int | 已消耗的转赠名额数。不同于 `consumed_slots`，此字段追踪的是"通过转赠获得的、已被报名消耗的名额"。通过 `course_gift_records.consumed_session_id` 绑定课期来追踪（报名扣减时若传了 `session_id` 且该学员有转赠记录，自动更新），退课时同步清除。仅审计/统计用，不参与任何业务判断；二次转赠拦截走 `total_gifted_slots` |
+| available_slots | int | 可用于报名的名额（计算值 = total_slots - consumed_slots - refunded_slots）。注意：**可转赠名额**需在此基础上再减去 `total_gifted_slots`，即 `total_slots - consumed_slots - refunded_slots - total_gifted_slots`（仅允许转赠自己购买的名额，不可转赠别人赠与的） |
 | created_at | string | 创建时间 |
 | updated_at | string | 更新时间 |
 
@@ -1120,6 +1198,7 @@ Go 服务不可达时返回 `502`。
 | :--- | :--- | :--- |
 | recharge | 充值 | 充值订单核销后累加 |
 | enroll_consume | 报名消耗 | 学员报名时消耗名额 |
+| enroll_withdraw | 退课退回 | 退课时名额回退。代报名归还出资人时写两条：出资人 A 名下（"代报名名额归还出资人"）和退课人 B 名下（"已归还出资人"） |
 | refund_deduct | 退款扣除 | 退款审核通过后扣除 |
 | transfer_out | 帮朋友报名 | A用自有名额帮B报名，A扣名额，备注记录B的ID |
 | transfer_in | 报名转入 | 帮朋友报名：接收方记录，对应 transfer_out |
@@ -1144,7 +1223,7 @@ Go 服务不可达时返回 `502`。
 | deduct_amount | decimal | 是 | 扣减金额（分，由调用方传入，后端不做单价校验） |
 | ref_order_id | int | 否 | 关联报名订单 ID |
 | remark | string | 否 | 备注 |
-| session_id | int | 否 | 课期 ID（传入时，若该学员有转赠名额，会自动标记转赠记录关联到此课期，并同步更新 `consumed_gifted_slots` 计数器） |
+| session_id | int | 否 | 课期 ID（传入时，若该学员有转赠名额，会自动标记转赠记录关联到此课期，并同步更新 `consumed_gifted_slots` 计数器。**支持课程账户和万能账户的转赠追踪**：扣减课程账户名额时查该课程的转赠记录，扣减万能账户名额时查万能账户（`course_id=0`）的转赠记录） |
 
 **响应 data：**
 
@@ -1183,11 +1262,49 @@ Go 服务不可达时返回 `502`。
 
 ---
 
+### 8.4.1 payUniversalRecharge — 万能名额充值（管理员专用）
+
+**使用场景：** 管理员为学员充值万能名额（`course_id=0`），万能名额可用于报名任意课程的课期。充值成功后自动创建线下订单（status=paid）并累加万能账户。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 学员 ID |
+| slots | int | 是 | 充值名额数（>0） |
+| amount | double | 否 | 充值金额（元），后端使用 `std::round(amount * 100)` 转分，避免浮点精度丢失 |
+| operator_id | int | 是 | 操作员 ID |
+| remark | string | 否 | 备注 |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| success | bool | 是否成功 |
+| order_id | int | 订单 ID |
+| order_no | string | 订单号 |
+| account_id | int | 万能账户 ID |
+
+**错误码：** `400` — 参数校验失败；`500` — 数据库写入失败
+
+**万能名额使用规则：**
+
+- 报名（`payCourseAccountDeduct`）和代报名（`payCourseAccountTransfer`）时，优先消耗课程名额，不够时自动补齐万能名额
+- 转赠（`payGiftCreate`）：万能名额可转赠，B 领取后获得万能名额（`course_id=0`）
+- 退课（`payCourseAccountWithdraw`）：万能名额退回到万能账户，转赠名额归还赠与人
+- 退款：万能订单支持退款
+
+---
+
 ### 8.5 payCourseAccountTransfer — 帮朋友报名（A给B/C报名）
 
-**使用场景：** A用自有名额帮朋友B报名。A消耗自有名额（`consumed_slots+N`），B 同步获得对应课程名额（`total_slots+N`，标记为 `total_gifted_slots+N` 防止二次转赠）。一次调用完成 A 扣减 + B 增加 + 双边流水，数据库事务保证原子性。给多人报名时循环调用，每次处理一个。
+**使用场景：** A用自有名额帮朋友B报名。A消耗自有名额（`consumed_slots+N`），B 同步获得对应课程名额（`total_slots+N`，标记为 `total_gifted_slots+N` 防止 B 将此名额二次转赠或代报名给他人）。一次调用完成 A 扣减 + B 增加 + 双边流水，数据库事务保证原子性。给多人报名时循环调用，每次处理一个。
 
 默认每次帮报名1个名额。具体报哪个活动/场次由前端决定。
+
+**⚠ `session_id` 必填说明：**
+
+`session_id` 虽然在接口参数上标记为"否"，但**强烈建议前端必传**。因为退课接口 `payCourseAccountWithdraw` 完全依赖此字段来追溯 B 的名额来自哪位出资人。若不传 `session_id`，后续 B 退课时会因无法定位出资人而导致退课失败（返回 400）。
 
 **示例**：A用课程X的自有名额给B报名。
 
@@ -1196,7 +1313,8 @@ Go 服务不可达时返回 `502`。
   "from_customer_id": 1,
   "to_customer_id": 2,
   "course_id": 10,
-  "remark": "A给B报名第4期"
+  "session_id": 42,
+  "remark": "A给B报名第42期"
 }
 ```
 
@@ -1210,6 +1328,7 @@ Go 服务不可达时返回 `502`。
 | to_customer_id | int | 是 | 被报名学员 ID（B） |
 | course_id | int | 是 | 课程 ID |
 | transfer_slots | int | 否 | 报名名额数量，默认 1 |
+| session_id | int | **建议必传** | 课期 ID，写入 `transfer_in` 流水。退课时依此精确归还名额给出资人。**不传则 B 后续无法退课** |
 | remark | string | 否 | 备注 |
 
 **响应 data：**
@@ -1225,7 +1344,7 @@ Go 服务不可达时返回 `502`。
 
 **操作内容**：
 1. A的 `consumed_slots + N`（消耗自有名额）
-2. B的 `total_slots + N`，`total_gifted_slots + N`（接收名额，标记为代报名来源，防二次转赠。仅当 `from != to` 时执行，自己报名跳过此步）
+2. B的 `total_slots + N`，`total_gifted_slots + N`（接收名额，标记为代报名来源，防止 B 将此名额再次代报名或转赠给他人。仅当 `from != to` 时执行，自己报名跳过此步）
 3. 写A的流水：`type=transfer_out`，`slots_change=-N`
 4. 写B的流水：`type=transfer_in`，`slots_change=+N`（仅当 `from != to` 时执行）
 
@@ -1271,10 +1390,11 @@ Go 服务不可达时返回 `502`。
 **并发安全**：事务包裹扣减 A + 增加 B + 写两条流水，A 扣减使用乐观锁 `WHERE (total_slots - consumed_slots - refunded_slots) >= gift_slots`。
 
 **操作内容**：
-1. A 的 `consumed_slots + N`（扣减转出方名额）
-2. B 的 `total_slots + N`（增加接收方名额，首次转赠自动创建账户）
+1. A 的 `consumed_slots + N`（冻结转出方名额，可用名额减少）
+2. B 的 `total_slots + N`、`total_gifted_slots + N`（接收方获得名额，标记为转赠来源，用于拦截二次转赠和退课时正确归还。首次转赠自动创建账户）
 3. 写 A 的流水：`type=gift_out`，`slots_change=-N`，`to_customer_id=B`
 4. 写 B 的流水：`type=gift_in`，`slots_change=+N`，`to_customer_id=A`
+5. 若为分享链接模式（`payGiftCreate` + `payGiftClaim`），还需写入 `course_gift_records` 表，记录赠与人/接收人/课程/课期绑定关系
 
 ---
 
@@ -1602,6 +1722,86 @@ Go 服务不可达时返回 `502`。
 
 ---
 
+### 8.15 payCourseAccountWithdraw — 退课退名额
+
+**使用场景：** 学员退课，将已消耗的名额回退到课程账户中。**只退名额，不退金额**。支持部分退课。后端自动分析每个已消耗名额的来源（自购/代报名/转赠），按规则归还：
+- 自购名额 → 退给自己
+- 代报名（transfer）→ 精确归还给出资人 A（依赖 `session_id`）
+- 转赠（gift）→ 名额所有权归还赠与人 A。B 的 `total_slots` 和 `total_gifted_slots` 同步减少，A 的 `consumed_slots` 解冻
+
+**⚠ 重要前提：代报名（transfer）必须传 `session_id`**
+
+退课精确归还出资人的能力**完全依赖**代报名接口 `payCourseAccountTransfer` 传入的 `session_id` 字段。如果代报名时未传 `session_id`，退课时将无法确定 B 的名额来自哪位出资人，接口会直接返回 400 拒绝退课（`"Transfer records found but session_id is not set, cannot determine funder for withdraw"`）。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 退课学员 ID（B） |
+| course_id | int | 是 | 课程 ID |
+| session_id | int | 是 | 课期 ID，退课时按此精确匹配该课期的消耗和代报名来源 |
+| withdraw_slots | int | 是 | 退回名额数（支持部分退课），必须 > 0 |
+| operator_id | int | 否 | 操作员 ID（留痕用） |
+
+**名额回退规则：**
+
+| 名额来源 | 退课后归属 | 操作 |
+|----------|-----------|------|
+| 自己购买 | 自己账户 | `consumed_slots -= n`，写 `enroll_withdraw` 流水（退课人 B 名下，`slots_change=+n`） |
+| 别人代报名 | 归还出资人 A | 按 `session_id` 查 B 的 `transfer_in` 流水找到出资人 A。扣除 A 同 session 已退还部分（查 A 的 `enroll_withdraw`）。B 的 `consumed_slots -= n` 且 `total_slots/total_gifted_slots -= n`，A 的 `consumed_slots -= n`。同时写**两条** `enroll_withdraw` 流水：① 出资人 A 名下（remark="退课退回（代报名名额归还出资人）"），② 退课人 B 名下（remark="退课退回名额（已归还出资人）"）。B 名下的记录用于后续退课时正确扣减 `withdrawn_by_account` |
+| 别人转赠 | 归还赠与人 A | B: `consumed_slots -= n`、`total_slots -= n`（转赠名额从接收者账户移除，防止凭空多出名额）、`total_gifted_slots -= n`（转赠标记清除），清除对应 gift record 的 `consumed_session_id`。A: `consumed_slots -= n`（当初转赠时冻结的名额解冻，恢复可用）。名额所有权归还转赠人 A |
+| 万能名额 | 万能账户（`course_id=0`） | 需求2实现后补充 |
+
+**`remaining_consumed` 计算逻辑：**
+
+退课通过 `enroll_consume` 和 `enroll_withdraw` 流水追溯同一学员同一课期的消耗与退回历史，`remaining_consumed = Σ|enroll_consume| - Σ enroll_withdraw - withdraw_slots`。因此**同一学员在同一课期多次退课时，每次退课都能正确感知之前的退回记录**，不会出现"上次退完这次又算全量"的 Bug。
+
+**校验规则：**
+
+1. `customer_id`、`course_id`、`session_id`、`withdraw_slots` 必填且 > 0
+2. 课程账户必须存在
+3. `withdraw_slots ≤ (该课期 enroll_consume 总消耗 - 已退回)`，否则 400。已退回 = B 名下该 session 的所有 `enroll_withdraw` 的 `slots_change` 之和
+4. **代报名（transfer）场景依赖 `session_id`**：按 `session_id` 查 `transfer_in` 流水定位出资人。若数据库中存在 B 的 `transfer_in` 记录但均无 `session_id`（历史数据），返回 400 拒退
+5. 事务内原子更新，`consumed_slots >= withdraw_slots` 乐观锁防并发
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| customer_id | int | 退课学员 ID |
+| course_id | int | 课程 ID |
+| session_id | int | 课期 ID |
+| withdrawn_slots | int | 实际退回名额数 |
+| remaining_consumed | int | 该课期剩余已消耗名额数（可继续退课的名额上限） |
+
+**示例：**
+
+```json
+// 请求 POST /api/payCourseAccountWithdraw
+{
+  "customer_id": 1001,
+  "course_id": 5,
+  "session_id": 42,
+  "withdraw_slots": 2,
+  "operator_id": 1
+}
+
+// 响应
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "customer_id": 1001,
+    "course_id": 5,
+    "session_id": 42,
+    "withdrawn_slots": 2,
+    "remaining_consumed": 3
+  }
+}
+```
+
+---
+
 ## 状态枚举值
 
 ### 订单支付状态（orders.status）
@@ -1673,6 +1873,7 @@ Go 服务不可达时返回 `502`。
 | `resubmit` | 业务员修改后重新提交 |
 | `close` | 关闭订单 |
 | `delete` | 删除订单（软删除） |
+| `modify` | 管理员修改订单信息 |
 | `pay_failed` | 支付失败 |
 | `refund_apply` | 申请退款 |
 | `refund_approve` | 退款审核通过 |
