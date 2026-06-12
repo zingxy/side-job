@@ -744,7 +744,7 @@ POST /api/payStaffPerformance
 7. 同一订单有 `pending`/`approved` 状态的退款时不可重复申请（并发保护）
 8. 5 分钟内同一订单同一申请人仅允许一笔 `pending` 退款（防刷）
 9. 线下订单（`source=offline`）只能由工作人员发起退款（`source=staff`）
-10. **退款名额自动截断**（仅在 `refund_slot_quantity > 0` 时执行）：退款名额超过可退名额时自动截断为可退名额数（取账户级可用名额和订单级可用名额的较小值）。若截断后 `max_refund_slots <= 0`，则拒绝申请。**账户级可退名额** = `total_slots - consumed_slots - refunded_slots - total_gifted_slots`（排除转赠名额，防止退掉别人赠与的名额）
+10. **退款名额自动截断**（仅在 `refund_slot_quantity > 0` 时执行）：退款名额超过可退名额时自动截断为可退名额数（取账户级可用名额和订单级可用名额的较小值）。若截断后 `max_refund_slots <= 0`，则拒绝申请。**账户级可退名额** = `total_slots - consumed_slots - refunded_slots`。订单级 `min(account, order_refundable)` 保证不会退掉超过订单的名额
 
 **退款类型自动判断：** 后端根据退款金额自动判定 `type`：
 - 等于订单总金额 → `full`（全额退款）
@@ -830,7 +830,7 @@ POST /api/payStaffPerformance
 - 线下订单（`channel=offline_manual`）：直接更新退款单状态为 `completed`
 - 同时根据退款类型更新订单状态：`full` → `refunded`，`partial` → `refunding`
 - 订单状态更新使用条件 UPDATE（`WHERE id=? AND status=?`）防并发覆盖，affected_rows=0 时 rollback 返回 409
-- 课程账户更新使用乐观锁（`WHERE (total_slots - consumed_slots - refunded_slots - total_gifted_slots) >= refund_slots`），affected_rows=0 时 rollback 返回 400
+- 课程账户更新使用乐观锁（`WHERE (total_slots - consumed_slots - refunded_slots) >= refund_slots`），affected_rows=0 时 rollback 返回 400
 - 退款流水记录插入失败时，整个事务 rollback，返回 500
 
 **审核拒绝时：** 更新退款单状态为 `rejected`，订单状态不变，前端可重新申请退款。
@@ -1140,9 +1140,9 @@ Go 服务不可达时返回 `502`。
 | total_slots | int | 累计充值获得名额数 |
 | consumed_slots | int | 已消耗名额数 |
 | refunded_slots | int | 已退款名额数 |
-| total_gifted_slots | int | 累计被转赠名额数（别人转给自己的，含代报名 transfer 和转赠 gift） |
-| consumed_gifted_slots | int | 已消耗的转赠名额数。不同于 `consumed_slots`，此字段追踪的是"通过转赠获得的、已被报名消耗的名额"。通过 `course_gift_records.consumed_session_id` 绑定课期来追踪（报名扣减时若传了 `session_id` 且该学员有转赠记录，自动更新），退课时同步清除。仅审计/统计用，不参与任何业务判断；二次转赠拦截走 `total_gifted_slots` |
-| available_slots | int | 可用于报名的名额（计算值 = total_slots - consumed_slots - refunded_slots）。注意：**可转赠名额**需在此基础上再减去 `total_gifted_slots`，即 `total_slots - consumed_slots - refunded_slots - total_gifted_slots`（仅允许转赠自己购买的名额，不可转赠别人赠与的） |
+| total_gifted_slots | int | 累计被转赠名额数（别人转给自己的，含代报名 transfer 和转赠 gift）。方案A下为**仅记账**字段，不参与可用名额计算，允许二次转赠 |
+| consumed_gifted_slots | int | 已消耗的转赠名额数。不同于 `consumed_slots`，此字段追踪的是"通过转赠获得的、已被报名消耗的名额"。通过 `course_gift_records.consumed_session_id` 绑定课期来追踪（报名扣减时若传了 `session_id` 且该学员有转赠记录，自动更新），退课时同步清除。仅审计/统计用，不参与任何业务判断 |
+| available_slots | int | 可用于报名的名额（计算值 = total_slots - consumed_slots - refunded_slots）。**可转赠名额**同此公式：`total_slots - consumed_slots - refunded_slots`（方案A：`total_gifted_slots` 仅记账，不再拦截二次转赠） |
 | created_at | string | 创建时间 |
 | updated_at | string | 更新时间 |
 
@@ -1213,6 +1213,13 @@ Go 服务不可达时返回 `502`。
 
 **扣减策略：** 消耗 `consumed_slots`（名额不可退款）。
 
+**⚠️ `session_id` 必填说明：**
+
+`session_id` 虽然在接口参数上标记为"否"，但**强烈建议前端必传**。因为：
+1. 退课接口依赖 `session_id` 匹配转赠记录（`course_gift_records.consumed_session_id`），追溯名额来源
+2. 不传 `session_id` 则转赠名额消耗无法追踪，后续退课时转赠名额将无法归还给源头购买者
+3. 同时影响 `consumed_gifted_slots` 计数器的准确性
+
 **请求参数：**
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -1223,7 +1230,7 @@ Go 服务不可达时返回 `502`。
 | deduct_amount | decimal | 是 | 扣减金额（分，由调用方传入，后端不做单价校验） |
 | ref_order_id | int | 否 | 关联报名订单 ID |
 | remark | string | 否 | 备注 |
-| session_id | int | 否 | 课期 ID（传入时，若该学员有转赠名额，会自动标记转赠记录关联到此课期，并同步更新 `consumed_gifted_slots` 计数器。**支持课程账户和万能账户的转赠追踪**：扣减课程账户名额时查该课程的转赠记录，扣减万能账户名额时查万能账户（`course_id=0`）的转赠记录） |
+| session_id | int | **⚠ 建议必传** | 课期 ID。**强烈建议必传**，否则：(1) 转赠名额消耗不会被追踪到 `course_gift_records.consumed_session_id`，(2) 后续退课无法正确匹配转赠记录、无法归还给源头购买者。退课接口依赖此字段追溯名额来源 |
 
 **响应 data：**
 
@@ -1262,9 +1269,9 @@ Go 服务不可达时返回 `502`。
 
 ---
 
-### 8.4.1 payUniversalRecharge — 万能名额充值
+### 8.4.1 payUniversalRecharge — 万能名额充值（管理员专用）
 
-**使用场景：** 为学员充值万能名额（`course_id=0`），万能名额可用于报名任意课程的课期。充值成功后自动创建线下订单（status=paid）并累加万能账户。
+**使用场景：** 管理员为学员充值万能名额（`course_id=0`），万能名额可用于报名任意课程的课期。充值成功后自动创建线下订单（status=paid）并累加万能账户。
 
 **请求参数：**
 
@@ -1290,15 +1297,17 @@ Go 服务不可达时返回 `502`。
 **万能名额使用规则：**
 
 - 报名（`payCourseAccountDeduct`）和代报名（`payCourseAccountTransfer`）时，优先消耗课程名额，不够时自动补齐万能名额
-- 转赠（`payGiftCreate`）：万能名额可转赠，B 领取后获得万能名额（`course_id=0`）
-- 退课（`payCourseAccountWithdraw`）：万能名额退回到万能账户，转赠名额归还赠与人
+- 转赠（`payGiftCreate`）：万能名额可转赠（`course_id=0`），B 领取后获得万能名额。**支持链式转赠**，退课时通过 `origin_giver_id` 追溯回源头购买者
+- 代报名（`payCourseAccountTransfer`）：万能名额可用于帮朋友报名（`course_id=X`，万能作为补充自动消耗）
+- 退课（`payCourseAccountWithdraw`）：万能名额退回到万能账户，转赠名额归还源头。转赠万能名额同样支持 `origin_giver_id` 追溯
+- 换课（`payGiftSessionUpdate`）：万能转赠记录同步更新 `consumed_session_id`（`course_id=0`）
 - 退款：万能订单支持退款
 
 ---
 
 ### 8.5 payCourseAccountTransfer — 帮朋友报名（A给B/C报名）
 
-**使用场景：** A用自有名额帮朋友B报名。A消耗自有名额（`consumed_slots+N`），B 同步获得对应课程名额（`total_slots+N`，标记为 `total_gifted_slots+N` 防止 B 将此名额二次转赠或代报名给他人）。一次调用完成 A 扣减 + B 增加 + 双边流水，数据库事务保证原子性。给多人报名时循环调用，每次处理一个。
+**使用场景：** A用自有名额帮朋友B报名。A消耗自有名额（`consumed_slots+N`），B 同步获得对应课程名额（`total_slots+N`，标记为 `total_gifted_slots+N`）。一次调用完成 A 扣减 + B 增加 + 双边流水，数据库事务保证原子性。给多人报名时循环调用，每次处理一个。
 
 默认每次帮报名1个名额。具体报哪个活动/场次由前端决定。
 
@@ -1352,7 +1361,7 @@ Go 服务不可达时返回 `502`。
 
 ### 8.6 payCourseAccountGift — 名额转赠（A转给B持有）
 
-**使用场景：** A将自己拥有的课程名额转赠给B。转赠后 A 的可用名额减少，B 的可用名额增加（名额所有权转移）。B 可以用转赠来的名额报名课期。**不支持链式转赠**（B 收到后不能再转给别人），后端通过 `total_gifted_slots` 字段拦截：可转赠名额 = 总名额 - 已消耗 - 已退款 - 已被赠与的名额。
+**使用场景：** A将自己拥有的课程名额转赠给B。转赠后 A 的可用名额减少，B 的可用名额增加（名额所有权转移）。B 可以用转赠来的名额报名课期。**支持链式转赠**（B 收到后可以再转给别人），`total_gifted_slots` 仅记账不拦截：可转赠名额 = `total_slots - consumed_slots - refunded_slots`。退课时名额沿 `origin_giver_id` 链追溯回源头购买者。**防环检测**：若接收人已在转赠链上（如 A→B→C 后 C 转给 A），返回 400 拒绝，防止环形转赠导致名额膨胀。
 
 一次调用完成 A 扣减 + B 增加，数据库事务保证原子性。A/B 必须不同人，转赠数量必须大于 0。
 
@@ -1391,7 +1400,7 @@ Go 服务不可达时返回 `502`。
 
 **操作内容**：
 1. A 的 `consumed_slots + N`（冻结转出方名额，可用名额减少）
-2. B 的 `total_slots + N`、`total_gifted_slots + N`（接收方获得名额，标记为转赠来源，用于拦截二次转赠和退课时正确归还。首次转赠自动创建账户）
+2. B 的 `total_slots + N`、`total_gifted_slots + N`（接收方获得名额，`total_gifted_slots` 仅记账。首次转赠自动创建账户。转赠记录写入 `origin_giver_id` 用于退课时追溯源头）
 3. 写 A 的流水：`type=gift_out`，`slots_change=-N`，`to_customer_id=B`
 4. 写 B 的流水：`type=gift_in`，`slots_change=+N`，`to_customer_id=A`
 5. 若为分享链接模式（`payGiftCreate` + `payGiftClaim`），还需写入 `course_gift_records` 表，记录赠与人/接收人/课程/课期绑定关系
@@ -1550,11 +1559,11 @@ Go 服务不可达时返回 `502`。
 **后端校验规则：**
 1. `gift_slots` 固定为 1，传其他值返回 400
 2. 发起方在该课程的可用名额 ≥ 1
-3. **二次转赠拦截**：可转赠名额 = `total_slots - consumed_slots - refunded_slots - total_gifted_slots`。仅允许转赠自己购买的名额，不能转赠别人赠与的名额（防止链式转赠）
+3. **二次转赠已放开**（方案A）：可转赠名额 = `total_slots - consumed_slots - refunded_slots`。`total_gifted_slots` 仅记账不拦截。创建转赠时查询赠与人是否接收过转赠，若是则传播 `origin_giver_id` 用于退课溯源
 4. 冻结名额：`consumed_slots + 1`（available_slots 减少）
 5. 生成 12 位随机 `claim_code`（大写字母+数字），写入转赠记录表（status=pending）
 
-**错误码：** `400` — 账户不存在 / 可用名额不足 / gift_slots 不为 1 / 无可转赠名额（全是赠与的）
+**错误码：** `400` — 账户不存在 / 可用名额不足 / gift_slots 不为 1
 
 ---
 
@@ -1582,6 +1591,7 @@ Go 服务不可达时返回 `502`。
 | receiver_id | int | 接收方 ID（已领取时有值） |
 | receiver_name | string | 接收方昵称（已领取时有值） |
 | consumed_session_id | int | 接收方用该转赠名额报名的课期 ID（未报名时为 0） |
+| origin_giver_id | int | 链式转赠源头购买者 ID（NULL=直接来自购买者，非 NULL=该名额的原始来源） |
 | expires_at | string | 过期时间 |
 | created_at | string | 创建时间 |
 
@@ -1611,12 +1621,13 @@ Go 服务不可达时返回 `502`。
 **后端校验规则：**
 1. `claim_code` 存在、status=pending、未过期
 2. `receiver_id ≠ giver_id`（不能领取自己的转赠）
-3. 接收方尚未领取过该 code（幂等）
-4. 事务内完成：发起方名额正式消耗 + 接收方名额增加 + 写流水 + 标记 claimed
+3. 接收方不能在转赠链上（防环检测：如 A→B→C 后 C 创建转赠，A 领取时被拦截）
+4. 接收方尚未领取过该 code（幂等）
+5. 事务内完成：发起方名额正式消耗 + 接收方名额增加 + 写流水 + 标记 claimed
 
 **流水记录：** 发起方 type=`gift_out`（转赠转出），接收方 type=`gift_in`（转赠收入），同时记录对方用户 ID。
 
-**错误码：** `400` — 转赠已过期 / 已领取 / 非本人 / 领取失败；`404` — claim_code 不存在
+**错误码：** `400` — 转赠已过期 / 已领取 / 环形链（接收人已在转赠链上） / 非本人 / 领取失败；`404` — claim_code 不存在
 
 **并发安全：** `UPDATE ... WHERE status='pending'` 原子更新，affected_rows=0 表示已被其他人领取。
 
@@ -1687,6 +1698,7 @@ Go 服务不可达时返回 `502`。
 | receiver_id | int | 接收方 ID（claimed 时有值） |
 | expires_at | string | 过期时间 |
 | created_at | string | 创建时间 |
+| origin_giver_id | int | 链式转赠源头购买者 ID（方案A，NULL=直接来自购买者） |
 | claimed_at | string | 领取时间（claimed 时有值） |
 
 ---
@@ -1722,7 +1734,95 @@ Go 服务不可达时返回 `502`。
 
 ---
 
-### 8.15 payCourseAccountWithdraw — 退课退名额
+### 8.15 payGiftSessionUpdate — 换课时更新转赠记录课期绑定
+
+**使用场景：** 学员换课后，换课系统（另一台服务器或前端）**必须调用此接口**，同步更新课期绑定关系。若不调用，退课时会因课期 ID 不匹配而导致名额无法归还。
+
+> **⚠️ 谁需要调用：** 无论是另一台服务器、管理后台还是小程序前端，只要执行了换课操作，就**必须紧接着调用此接口**。建议在换课事务中作为最后一步，失败时不影响换课本身（换课成功后异步补偿更新也可）。
+
+**请求参数：**
+
+| 字段 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| customer_id | int | 是 | 换课学员 ID |
+| course_id | int | 是 | 课程 ID（换的原课程，非万能名额可传 0） |
+| from_session_id | int | 是 | 原课期 ID（换课前所在的课期） |
+| to_session_id | int | 是 | 新课期 ID（换课后的目标课期） |
+
+**响应 data：**
+
+| 字段 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| affected_rows | int | 更新的记录数（gift_records + transactions 合计） |
+
+**示例：**
+
+```json
+// 请求：学员 5203 从课期 100 换到课期 200
+{
+  "customer_id": 5203,
+  "course_id": 1,
+  "from_session_id": 100,
+  "to_session_id": 200
+}
+```
+
+```json
+// 响应
+{
+  "code": 200,
+  "msg": "success",
+  "data": {
+    "affected_rows": 2
+  }
+}
+```
+
+**后端逻辑（事务内原子执行）：**
+
+```sql
+-- 1. 更新转赠记录的课期绑定
+UPDATE course_gift_records
+SET consumed_session_id = to_session_id
+WHERE receiver_id = customer_id
+  AND course_id IN (course_id, 0)  -- 同时处理课程和万能转赠
+  AND consumed_session_id = from_session_id
+  AND status = 'claimed';
+
+-- 2. 同步更新报名消耗流水的 session_id（退课依赖此表）
+UPDATE course_account_transactions
+SET session_id = to_session_id
+WHERE course_id IN (course_id, 0)
+  AND session_id = from_session_id
+  AND (
+    (customer_id = customer_id AND type IN ('enroll_consume', 'transfer_in'))
+    OR (to_customer_id = customer_id AND type = 'transfer_out')
+  );
+```
+
+**为什么必须调用此接口：**
+
+| 不调用的后果 | 说明 |
+|-------------|------|
+| 退课找不到消耗记录 | `enroll_consume` / `transfer_in` 的 `session_id` 仍是旧值，退课时按新课期 ID 查不到 |
+| 转赠名额无法归还 | `course_gift_records.consumed_session_id` 不匹配，退课时 gift record 查不到，源头购买者收不回名额 |
+| 代报名出资人无法收回 | `transfer_out` 的 `session_id` 是旧值，退课时无法定位出资人拆分课程/万能来源 |
+
+**调用时序：**
+
+```
+换课操作（另一台服务器）
+  ↓
+换课成功
+  ↓
+调用 payGiftSessionUpdate  ← 必须调用，建议同步
+  ↓
+后续退课时正常匹配
+```
+
+---
+
+### 8.16 payCourseAccountWithdraw — 退课退名额
 
 **使用场景：** 学员退课，将已消耗的名额回退到课程账户中。**只退名额，不退金额**。支持部分退课。后端自动分析每个已消耗名额的来源（自购/代报名/转赠），按规则归还：
 - 自购名额 → 退给自己
@@ -1749,7 +1849,7 @@ Go 服务不可达时返回 `502`。
 |----------|-----------|------|
 | 自己购买 | 自己账户 | `consumed_slots -= n`，写 `enroll_withdraw` 流水（退课人 B 名下，`slots_change=+n`） |
 | 别人代报名 | 归还出资人 A | 按 `session_id` 查 B 的 `transfer_in` 流水找到出资人 A。扣除 A 同 session 已退还部分（查 A 的 `enroll_withdraw`）。B 的 `consumed_slots -= n` 且 `total_slots/total_gifted_slots -= n`，A 的 `consumed_slots -= n`。同时写**两条** `enroll_withdraw` 流水：① 出资人 A 名下（remark="退课退回（代报名名额归还出资人）"），② 退课人 B 名下（remark="退课退回名额（已归还出资人）"）。B 名下的记录用于后续退课时正确扣减 `withdrawn_by_account` |
-| 别人转赠 | 归还赠与人 A | B: `consumed_slots -= n`、`total_slots -= n`（转赠名额从接收者账户移除，防止凭空多出名额）、`total_gifted_slots -= n`（转赠标记清除），清除对应 gift record 的 `consumed_session_id`。A: `consumed_slots -= n`（当初转赠时冻结的名额解冻，恢复可用）。名额所有权归还转赠人 A |
+| 别人转赠 | 归还源头购买者 | B: `consumed_slots -= n`、`total_slots -= n`（转赠名额从接收者账户移除）、`total_gifted_slots -= n`（转赠标记清除），清除对应 gift record 的 `consumed_session_id`。归还目标通过 `origin_giver_id` 追溯（`gr.origin_giver_id.value_or(gr.giver_id)`）：A→B→C，C 退课 → 归还源头 A。中间人 B 账户持平不受影响 |
 | 万能名额 | 万能账户（`course_id=0`） | 需求2实现后补充 |
 
 **`remaining_consumed` 计算逻辑：**
@@ -1879,3 +1979,39 @@ Go 服务不可达时返回 `502`。
 | `refund_approve` | 退款审核通过 |
 | `refund_reject` | 退款审核拒绝 |
 | `refund_fail` | 微信退款 API 调用失败 |
+
+---
+
+## ⚠️ 前端重要提醒
+
+### 1. `session_id` 是退课的生命线
+
+以下接口**强烈建议必传 `session_id`**，否则退课功能无法正常工作：
+
+| 接口 | 必传原因 |
+|------|---------|
+| `payCourseAccountDeduct` | 不传→转赠记录不绑定课期→退课时转赠名额无法归还 |
+| `payCourseAccountTransfer` | 不传→退课时无法定位出资人→退课直接失败(400) |
+
+### 2. 换课时必须调用 `payGiftSessionUpdate`
+
+**无论是管理后台、小程序还是另一台服务器执行换课，换课成功后必须紧接着调用 `payGiftSessionUpdate`。**
+
+```
+换课完成 → 立即调用 payGiftSessionUpdate → 后续退课正常
+                                    ↘ 跳过此步 → 退课失败(400)
+```
+
+此接口事务内原子更新 4 类数据：转赠记录 + 报名消耗流水 + 代报名接收流水 + 代报名出资流水。调用一次即可覆盖所有场景。
+
+### 3. 链式转赠已支持（方案A）
+
+- 转赠名额可以继续转赠（`total_gifted_slots` 仅记账，不再拦截）
+- 退课时名额通过 `origin_giver_id` 追溯回源头购买者
+- **防环检测**：转赠/领取时检测接收人是否已在链上，拒绝环形转赠（如 A→B→C→A），防止名额膨胀
+- **退课兜底**：链式步行清理中间人时使用 `visited` 集合防重复，即使数据异常也不会死循环
+
+### 4. 万能名额（`course_id=0`）
+
+- 转赠、代报名、退课、链式追溯均支持万能名额
+- 换课更新同步覆盖万能转赠记录
