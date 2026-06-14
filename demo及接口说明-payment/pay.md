@@ -134,10 +134,10 @@ const data = await res.json();
 | source | string | 否 | 订单来源，默认 `mini_program` |
 | slot_quantity | int | 否 | 名额数量，默认 1，**必须大于 0** |
 | created_by_staff_id | int | 否 | 操作员 ID（创建订单人 ID） |
-| recharge_type | string | 否 | 充值类型，后端自动判断：有历史充值记录 → `additional_recharge`，否则 → `recharge` |
+| recharge_type | string | 否 | 充值类型，可选值：`recharge` / `additional_recharge` / `retrain_recharge` / `qixin_recharge`。**前端可传入**（如传入非法值返回 400），未传时自动判断：有历史充值记录 → `additional_recharge`，否则 → `recharge` |
 | payment_method | string | 否 | 充值方式，后端自动设为 `wechat` |
 
-**注意：** `recharge_type` 和 `payment_method` 由后端自动填充，前端无需传入。小程序端仅区分 `recharge`（充值）和 `additional_recharge`（追加充值）。
+**注意：** `payment_method` 由后端自动填充。`recharge_type` 前端可传入指定类型，不传则后端自动判断。
 
 **响应 data：**
 
